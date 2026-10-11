@@ -7,9 +7,10 @@ try {
 
 const port = Number(process.env.PORT ?? 4000);
 
-const { app, sessionStore } = buildApp();
+const { app, sessionStore, supervisor } = buildApp();
 
 await sessionStore.init();
+supervisor.start();
 
 try {
   await app.listen({ port, host: "0.0.0.0" });

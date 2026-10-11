@@ -20,7 +20,10 @@ function demuxLogs(bruto: Buffer): string {
 }
 
 export class DockerOrchestrator implements ContainerOrchestrator {
-  constructor(private readonly docker: Docker = new Docker()) {}
+  constructor(
+    private readonly docker: Docker = new Docker(),
+    private readonly network?: string,
+  ) {}
 
   async createWorker(cfg: WorkerConfig): Promise<string> {
     const nome = `mpw-worker-${cfg.accountId}`;
@@ -44,7 +47,10 @@ export class DockerOrchestrator implements ContainerOrchestrator {
         [LABEL_MANAGED]: "true",
         [LABEL_ACCOUNT]: cfg.accountId,
       },
-      HostConfig: { AutoRemove: false },
+      HostConfig: {
+        AutoRemove: false,
+        ...(this.network ? { NetworkMode: this.network } : {}),
+      },
     });
     return container.id;
   }

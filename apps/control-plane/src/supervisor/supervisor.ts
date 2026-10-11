@@ -3,6 +3,16 @@ import type {
   WorkerStatus,
 } from "../orchestrator/types.js";
 
+export interface TokensRenovados {
+  accessToken: string;
+  refreshToken: string;
+}
+
+type CallbackTokensRenovados = (
+  accountId: string,
+  tokens: TokensRenovados,
+) => void | Promise<void>;
+
 export type DesiredState = "running" | "stopped";
 
 export interface WorkerSnapshot extends WorkerStatus {
@@ -34,6 +44,8 @@ interface EstadoSupervisao {
 export class Supervisor {
   private estados = new Map<string, EstadoSupervisao>();
   private ultimaLista: WorkerStatus[] = [];
+  private ultimosTokens = new Map<string, TokensRenovados>();
+  private onTokensRenovados: CallbackTokensRenovados | null = null;
   private timer: NodeJS.Timeout | null = null;
   private emPoll = false;
 
@@ -78,6 +90,10 @@ export class Supervisor {
       clearInterval(this.timer);
       this.timer = null;
     }
+  }
+
+  setOnTokensRenovados(callback: CallbackTokensRenovados): void {
+    this.onTokensRenovados = callback;
   }
 
   getSnapshot(): WorkerSnapshot[] {
@@ -130,8 +146,42 @@ export class Supervisor {
           }
         }
       }
+      if (this.onTokensRenovados) {
+        for (const worker of this.ultimaLista) {
+          if (worker.state === "running") {
+            await this.verificarTokens(worker.accountId);
+          }
+        }
+      }
     } finally {
       this.emPoll = false;
     }
+  }
+
+  private async verificarTokens(accountId: string): Promise<void> {
+    let corpo: { tokens?: TokensRenovados };
+    try {
+      const resposta = await fetch(`http://mpw-worker-${accountId}:3001/health`);
+      if (!resposta.ok) return;
+      corpo = (await resposta.json()) as { tokens?: TokensRenovados };
+    } catch {
+      return;
+    }
+    const tokens = corpo.tokens;
+    if (!tokens?.accessToken || !tokens.refreshToken) return;
+    const anterior = this.ultimosTokens.get(accountId);
+    if (
+      anterior &&
+      anterior.accessToken === tokens.accessToken &&
+      anterior.refreshToken === tokens.refreshToken
+    ) {
+      return;
+    }
+    try {
+      await this.onTokensRenovados?.(accountId, tokens);
+    } catch {
+      return;
+    }
+    this.ultimosTokens.set(accountId, tokens);
   }
 }
