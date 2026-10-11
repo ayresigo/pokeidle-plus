@@ -78,6 +78,8 @@ Control-plane consulta `GET /version` no boot e a cada 6h. Automático ligado: p
 | `accounts` | id, user_id, label, pokeidle_user, pokeidle_pass_enc, access_token_enc, refresh_token_enc, proxy_url, solver_key_enc, created_at |
 | `releases` | id, version, channel, image_digest, changelog, published_at |
 
+Nota: nomes físicos das colunas seguem o padrão Prisma (camelCase, sem `@map`); acesso sempre via Prisma Client. Tabelas em snake_case via `@@map`.
+
 ## Erros por design
 
 - VPS fora → grace 7 dias; workers seguem; sem start/config novo
