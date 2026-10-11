@@ -62,5 +62,6 @@ model Release {
   changelog   String
   publishedAt DateTime @default(now())
 
+  @@unique([version, channel])
   @@map("releases")
 }
