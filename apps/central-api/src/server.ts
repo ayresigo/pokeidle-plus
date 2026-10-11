@@ -1,5 +1,10 @@
 import { buildApp } from "./app.js";
 
+try {
+  process.loadEnvFile(".env");
+} catch {
+}
+
 const port = Number(process.env.PORT ?? 8080);
 
 const app = buildApp();

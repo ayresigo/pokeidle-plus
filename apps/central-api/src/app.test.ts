@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+
+process.env.JWT_SECRET ??= "segredo-teste-app";
+
 import { buildApp } from "./app.js";
 
 describe("health", () => {
