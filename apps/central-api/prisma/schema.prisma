@@ -1,0 +1,66 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  admin
+  user
+}
+
+model User {
+  id           String         @id @default(uuid())
+  username     String         @unique
+  passwordHash String
+  role         Role           @default(user)
+  active       Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  refreshTokens RefreshToken[]
+  accounts     Account[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model Account {
+  id               String   @id @default(uuid())
+  userId           String
+  label            String
+  pokeidleUser     String
+  pokeidlePassEnc  Bytes
+  accessTokenEnc   Bytes?
+  refreshTokenEnc  Bytes?
+  proxyUrl         String?
+  solverKeyEnc     Bytes?
+  createdAt        DateTime @default(now())
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Release {
+  id          String   @id @default(uuid())
+  version     String
+  channel     String
+  imageDigest String
+  changelog   String
+  publishedAt DateTime @default(now())
+
+  @@map("releases")
+}
