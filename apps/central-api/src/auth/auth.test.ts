@@ -11,6 +11,7 @@ try {
 }
 
 process.env.JWT_SECRET ??= "segredo-teste-auth";
+process.env.SECRETS_KEY ??= "0".repeat(64);
 
 import { buildApp } from "../app.js";
 
