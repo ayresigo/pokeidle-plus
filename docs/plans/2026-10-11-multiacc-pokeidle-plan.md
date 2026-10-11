@@ -150,14 +150,15 @@ Commit `feat(central-api): criptografia aes-gcm de segredos`.
 - Test: `apps/central-api/src/accounts/accounts.test.ts`
 
 **Endpoints** (todos exigem access JWT válido — plugin `requireAuth` que valida e injeta `request.userId`):
-- `GET /accounts` — só as do `request.userId`
-- `POST /accounts` {label, pokeidleUser, pokeidlePass, proxyUrl?} — senha criptografada antes de persistir; resposta **nunca** inclui senha
+- `GET /accounts` — só as do `request.userId` (nunca inclui senha nem tokens)
+- `POST /accounts` {label, pokeidleUser, pokeidlePass, proxyUrl?, solverKey?, accessToken?, refreshToken?} — segredos criptografados antes de persistir
 - `PATCH /accounts/:id` — mesmos campos opcionais
 - `DELETE /accounts/:id`
-- `GET /accounts/:id/credentials` — retorna senha **descriptografada** (único endpoint; usado pelo control-plane no start do worker)
+- `GET /accounts/:id/credentials` — retorna senha, tokens e solverKey **descriptografados** (único endpoint; usado pelo control-plane no start do worker)
+- `PUT /accounts/:id/tokens` {accessToken, refreshToken} — atualiza tokens (control-plane persiste refresh renovado pelo worker)
 - Acesso a id de outro user → 404 (não 403, para não vazar existência)
 
-**Testes:** isolamento entre dois users; senha nunca em GET /accounts; credentials retorna plaintext correto.
+**Testes:** isolamento entre dois users; segredos nunca em GET /accounts; credentials retorna plaintext correto; PUT /tokens atualiza e criptografa.
 
 Commit `feat(central-api): crud multi-tenant de contas`.
 
@@ -232,7 +233,7 @@ export interface ContainerOrchestrator {
 `WorkerConfig`: `{accountId, imageRef, env: Record<string,string>, labels}`.
 `WorkerStatus`: `{id, accountId, state, health, startedAt, restartCount}`.
 
-Implementação `DockerOrchestrator`: nome `mpw-worker-<accountId>`, labels `mpw.managed=true`, `mpw.account-id`, volume `mpw-profile-<accountId>` em `/profile`, `HostConfig.AutoRemove=false` (restart gerenciado por nós).
+Implementação `DockerOrchestrator`: nome `mpw-worker-<accountId>`, labels `mpw.managed=true`, `mpw.account-id`, `HostConfig.AutoRemove=false` (restart gerenciado por nós). Worker é Node puro — sem volume de perfil de browser.
 
 **Testes de integração** (Docker real, imagem `alpine` como fake worker — rodar com `DOCKER_HOST` disponível; skip se indisponível): ciclo create→start→stop→remove; listWorkers filtra por label.
 
@@ -256,11 +257,13 @@ Commit `feat(control-plane): supervisor com backoff`.
 - Create: `apps/control-plane/src/workers/routes.ts`
 - Test: `apps/control-plane/src/workers/routes.test.ts` (fetch stub do central + orchestrator fake)
 
-**Fluxo de start:** `POST /workers/:accountId/start` → busca credenciais em `GET central /accounts/:id/credentials` (com access token) → monta env (`ACCOUNT_ID`, `POKEIDLE_USER`, `POKEIDLE_PASS`, `PROXY_URL?`) → `createWorker` → `startWorker`. Credenciais **só em memória**, nunca em disco/log.
+**Fluxo de start:** `POST /workers/:accountId/start` → busca credenciais em `GET central /accounts/:id/credentials` (com access token) → monta env (`ACCOUNT_ID`, `GAME_URL`, `POKEIDLE_USER`, `POKEIDLE_PASS`, `ACCESS_TOKEN?`, `REFRESH_TOKEN?`, `SOLVER_KEY?`, `PROXY_URL?`) → `createWorker` → `startWorker`. Credenciais **só em memória**, nunca em disco/log.
+
+**Token write-back:** o supervisor (Task 12), ao fazer poll de `/health` do worker, detecta tokens renovados no estado exposto e persiste via `PUT central /accounts/:id/tokens`. Worker não tem credencial do central.
 
 Stop: `stopWorker(id, 30)` (tempo de drain) + `removeWorker`.
 
-**Teste:** start monta env correta incluindo proxy; env não vaza em logs.
+**Teste:** start monta env correta incluindo proxy e tokens; env não vaza em logs; write-back chama PUT ao detectar token novo no health.
 
 Commit `feat(control-plane): rotas de ciclo de vida de workers`.
 
@@ -298,52 +301,62 @@ Commit `feat(control-plane): dockerfile`.
 
 ## Fase 3 — Worker (`packages/worker`)
 
-### Task 17: Pesquisa PokeIdle (BLOQUEANTE para Task 19)
+**Decisão pós-pesquisa (GAME.md, commit 94ff8e1):** worker é **Node puro WS/REST, sem Chromium**. Login atrás de interface `TokenProvider` com duas estratégias: solver Turnstile (2captcha-compatível, primária) e token colado (fallback). Protocolo real do jogo em `packages/worker/GAME.md` — fonte de verdade para eventos Socket.IO e endpoints REST.
 
-Investigar e documentar em `packages/worker/GAME.md`:
-- URL do jogo e fluxo de login (form? OAuth? sessão em cookie/localStorage?)
-- Seletores DOM: botão de login, indicadores de "logado", ações idle principais (coletar/batalhar/curar)
-- Comportamento anti-bot óbvio (CAPTCHA, rate limit, detecção de headless)
-
-Sem código — documento de referência para o módulo `game/`.
-
-Commit `docs(worker): pesquisa de mecânica do pokeidle`.
+### Task 17: Pesquisa PokeIdle ✅ (concluída — GAME.md commitado em 94ff8e1)
 
 ### Task 18: Esqueleto do worker + health
 
 **Files:**
-- Create: `packages/worker/src/index.ts`, `packages/worker/src/health.ts`, `packages/worker/src/config.ts`
+- Create: `packages/worker/package.json`, `packages/worker/tsconfig.json`, `packages/worker/src/index.ts`, `packages/worker/src/health.ts`, `packages/worker/src/config.ts`
 - Test: `packages/worker/src/config.test.ts`
 
-`config.ts` valida env com falha clara (`ACCOUNT_ID`, `POKEIDLE_USER`, `POKEIDLE_PASS` obrigatórias; `PROXY_URL` opcional; `GAME_URL` default da pesquisa). HTTP `/health` na porta 3001 retorna `{state: "booting"|"logging-in"|"in-game"|"error", lastAction, lastError, uptimeSec}`.
+`config.ts` valida env com falha clara (`ACCOUNT_ID`, `GAME_URL` obrigatórias; `POKEIDLE_USER`/`POKEIDLE_PASS` obrigatórias se `SOLVER_KEY` presente; `ACCESS_TOKEN`/`REFRESH_TOKEN` opcionais; `PROXY_URL` opcional; `CONTROL_PLANE_URL` para o supervisor alcançar). HTTP `/health` na porta 3001 retorna `{state: "booting"|"authenticating"|"in-game"|"needs-login"|"error", lastAction, lastError, uptimeSec, tokens?: {accessToken, refreshToken}}` — `tokens` presente apenas quando renovados (o control-plane lê e persiste no central).
 
 Commit `feat(worker): esqueleto com health e config`.
 
-### Task 19: Módulo game (login + loop)
+### Task 19: TokenProvider + autenticação
 
 **Files:**
-- Create: `packages/worker/src/game/session.ts`, `packages/worker/src/game/loop.ts`, `packages/worker/src/game/selectors.ts`
+- Create: `packages/worker/src/auth/provider.ts`, `packages/worker/src/auth/refresh.ts`, `packages/worker/src/auth/solver.ts`
+- Test: `packages/worker/src/auth/provider.test.ts`, `packages/worker/src/auth/solver.test.ts`
+
+**Interface:**
+```ts
+export interface TokenProvider {
+  getTokens(): Promise<{accessToken: string, refreshToken: string}>;
+}
+```
+
+- `StoredTokenProvider`: usa `ACCESS_TOKEN`/`REFRESH_TOKEN` do env; ausente → null
+- `SolverTokenProvider`: se sem tokens e `SOLVER_KEY` presente → resolve Turnstile via API 2captcha-compatível (`createTask`/`getTaskResult`, task type `TurnstileTaskProxyless`, sitekey extraído do GAME.md/bundle) → `POST GAME_URL/api/auth/login {identifier, password, captchaToken}` → tokens
+- `refresh.ts`: `POST /api/auth/refresh` com backoff; access expirado → refresh antes de cada janela de uso; refresh renovado exposto no `/health` para write-back
+- Falha total de auth → state `needs-login` no health (UI pede token colado)
+- `PROXY_URL`: `undici` ProxyAgent para REST e `ws` com agent para o Socket.IO
+
+**Testes (fetch/HTTP stubs):** ordem de precedência stored→solver→needs-login; refresh chamado quando access expira; tokens renovados aparecem no health; solver parseia resposta 2captcha (incl. polling de resultado).
+
+**Nota:** a integração real do solver só é validada em smoke manual com conta real — marcar no GAME.md como ponto de verificação.
+
+Commit `feat(worker): token providers e refresh`.
+
+### Task 20: Game loop WS/REST + drain + Dockerfile
+
+**Files:**
+- Create: `packages/worker/src/game/client.ts`, `packages/worker/src/game/loop.ts`, `docker/Dockerfile.worker`
 - Test: `packages/worker/src/game/loop.test.ts`
 
-`selectors.ts` — todos os seletores do GAME.md centralizados (única fonte quando o jogo mudar).
-`session.ts` — `launchBrowser(proxyUrl?, profileDir)` (Chromium headless via Playwright, `userDataDir=/profile`), `ensureLoggedIn(page)` (detecta sessão viva do perfil antes de relogar).
-`loop.ts` — `runGameLoop(page, actions, {minDelayMs, maxDelayMs})`: executa ações em rodízio com delay aleatório uniforme (jitter), registra `lastAction`, captura erros por ação sem derrubar o loop (erro consecutivo ×5 → throw para o supervisor).
+`client.ts`: conecta Socket.IO com Bearer; parseia eventos do GAME.md (`field-init`, `field-kill`, `catch-result`, `balls`, `inventory`); expõe comandos (`enter-hunt`, `set-city`) e REST (`/api/game/balls/buy` etc.). WS close code 4001 (sessão duplicada) → state `needs-login`.
 
-**Teste (page fake):** jitter dentro do intervalo; 5 erros consecutivos propagam; sucesso reseta.
+`loop.ts`: `runGameLoop(client, actions, {minDelayMs, maxDelayMs})` — rodízio de ações com jitter uniforme, registra `lastAction`, erro de ação não derruba o loop (5 consecutivos → throw para o supervisor).
 
-Commit `feat(worker): game loop com jitter e tolerância a erro`.
+**Teste (client fake):** jitter dentro do intervalo; 5 erros consecutivos propagam; sucesso reseta; close 4001 muda state para needs-login.
 
-### Task 20: Drain gracioso + Dockerfile worker
+`SIGTERM` → para de agendar, aguarda ação corrente (timeout 20s), fecha WS, exit 0.
 
-**Files:**
-- Modify: `packages/worker/src/index.ts`
-- Create: `docker/Dockerfile.worker`
+Dockerfile: `node:22-slim`, copia dist, `CMD ["node","dist/index.js"]`. Sem Playwright, sem Chromium.
 
-`SIGTERM` → para de agendar novas ações, aguarda ação corrente (timeout 20s), `browser.close()`, exit 0. Teste: SIGTERM durante ação fecha browser (mock) antes do exit.
-
-Dockerfile: base `mcr.microsoft.com/playwright:v1.49.0-noble`, copia dist, `CMD ["node","dist/index.js"]`, volume `/profile` declarado.
-
-Commit `feat(worker): drain sigterm e dockerfile`.
+Commit `feat(worker): game loop ws/rest com drain e dockerfile`.
 
 ---
 
@@ -381,7 +394,7 @@ Commit `feat(web): dashboard com status ao vivo`.
 **Files:**
 - Create: `apps/web/app/accounts/new/page.tsx`, `apps/web/app/accounts/[id]/page.tsx`
 
-Campos label, pokeidleUser, pokeidlePass, proxyUrl. Botão "testar proxy" → `POST control-plane /proxy/test` (sobe container efêmero `curl` pelo proxy, retorna IP de saída). Validação de formato de URL no client.
+Campos label, pokeidleUser, pokeidlePass, proxyUrl, solverKey (opcional) e seção "ou cole os tokens" (accessToken + refreshToken, com instrução de como extrair do `sessionStorage['pokeweb:tokens']` no DevTools). Botão "testar proxy" → `POST control-plane /proxy/test` (sobe container efêmero `curl` pelo proxy, retorna IP de saída). Validação de formato de URL no client. Conta em estado `needs-login` mostra CTA destacado para colar tokens.
 
 **Nota:** adicionar endpoint `POST /proxy/test` no control-plane (Task implícita — teste falhando primeiro: orchestrator fake recebe create com entrypoint curl e proxy env).
 

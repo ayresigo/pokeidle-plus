@@ -29,7 +29,7 @@ flowchart TB
     subgraph LOCAL["PC de cada usuário — docker-compose"]
         UI["Next.js UI :3000"]
         CP["control-plane<br/>Fastify + dockerode"]
-        W1["worker-acc1<br/>Chromium+Playwright"]
+        W1["worker-acc1<br/>Node WS/REST"]
         W2["worker-acc2<br/>proxy opcional"]
         UI --> CP
         CP -->|docker socket| W1 & W2
@@ -47,7 +47,13 @@ flowchart TB
 
 **Control-plane (local)** — Fastify + dockerode. Valida JWT em todo endpoint, busca configs no central (cache em memória), cria/destroi/reinicia workers via Docker socket, executa updates (pull + rolling recreate + updater efêmero para si mesmo e a UI), health-check e backoff de workers.
 
-**Worker (efêmero, nunca no compose)** — `node:22-slim` + Playwright Chromium. Recebe config por env vars, volume nomeado `mpw-profile-<accountId>` persiste perfil do browser (evita relogin/anti-bot), game loop com jitter, drain gracioso em SIGTERM, healthcheck HTTP local + logs JSON no stdout. Não tem credencial nenhuma do central.
+**Worker (efêmero, nunca no compose)** — `node:22-slim`, **sem browser**: cliente WS/REST puro (`ws` + `fetch`), ~50 MB RAM por conta. O jogo é server-authoritative (Socket.IO + REST `/api/game/*`, ver `packages/worker/GAME.md`). Recebe config por env vars; healthcheck HTTP local + logs JSON no stdout; drain gracioso em SIGTERM. Não tem credencial nenhuma do central.
+
+**Login (interface `TokenProvider`, estratégia trocável):**
+1. **Solver Turnstile** (primária): chave de API 2captcha-compatível por conta ou global; worker resolve o Turnstile e faz `POST /api/auth/login` sozinho
+2. **Token colado** (fallback): usuário loga no browser normal, copia `sessionStorage['pokeweb:tokens']` e cola na UI; tokens ficam criptografados no central
+- Refresh automático via `/api/auth/refresh` (sem CAPTCHA); tokens renovados são persistidos de volta no central pelo control-plane
+- Sessão derrubada (WS close 4001) ou refresh expirado → worker marca `needs-login` e a UI pede nova ação (solver ou cola)
 
 ### Orquestração
 
@@ -69,7 +75,7 @@ Control-plane consulta `GET /version` no boot e a cada 6h. Automático ligado: p
 |---|---|
 | `users` | id, username, password_hash, role (admin/user), active |
 | `refresh_tokens` | id, user_id, token_hash, expires_at, revoked_at |
-| `accounts` | id, user_id, label, pokeidle_user, pokeidle_pass_enc, proxy_url, created_at |
+| `accounts` | id, user_id, label, pokeidle_user, pokeidle_pass_enc, access_token_enc, refresh_token_enc, proxy_url, solver_key_enc, created_at |
 | `releases` | id, version, channel, image_digest, changelog, published_at |
 
 ## Erros por design
@@ -88,6 +94,7 @@ Control-plane consulta `GET /version` no boot e a cada 6h. Automático ligado: p
 
 ## Riscos
 
-- **Lógica do game loop depende do DOM do PokeIdle** (desconhecido até a fase do worker) — isolada em módulo `game/` no worker, trocável sem tocar infra. Pesquisa de seletores/fluxo de login é pré-requisito da fase do bot.
+- **Solver Turnstile é aposta não validada**: 2captcha e afins anunciam suporte a Turnstile, mas só a Task 19 (integração real) prova. Se falhar, fallback de token colado já está no design e a troca de estratégia é localizada (interface `TokenProvider`)
+- **Lógica do game loop depende do protocolo WS/REST do Poke Idle World** (parcialmente mapeado no GAME.md; eventos/endpoints completos só em runtime) — isolada em módulo `game/` no worker, trocável sem tocar infra
 - VPS é dependência dura para start/config (decisão do usuário: sem banco local).
 - Termos de serviço do PokeIdle: automação pode violar ToS; risco assumido pelo usuário.
