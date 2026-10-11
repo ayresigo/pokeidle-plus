@@ -1,0 +1,469 @@
+# Multiacc PokeIdle — Implementation Plan
+
+> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+
+**Goal:** App distribuído onde cada usuário roda localmente (compose: UI + control-plane + workers efêmeros) bots Playwright de contas PokeIdle, com auth/dados/versionamento numa API central (VPS) + PostgreSQL.
+
+**Architecture:** Monorepo pnpm. `apps/central-api` (Fastify+Prisma, VPS), `apps/control-plane` (Fastify+dockerode, local), `apps/web` (Next.js, local), `packages/worker` (bot Playwright), `packages/shared` (tipos/contratos). Workers são containers efêmeros criados via dockerode; imagens publicadas no GHCR.
+
+**Tech Stack:** Node 22, TypeScript, pnpm workspaces, Vitest, Fastify, Prisma+Postgres, dockerode, Next.js 15 (App Router) + Tailwind, Playwright, Docker, GHCR.
+
+**Referência de design:** `docs/plans/2026-10-11-multiacc-pokeidle-design.md`
+
+**Convenções globais (do AGENTS.md do usuário):** sem comentários em linhas de código; respostas em PT-BR; sem comandos destrutivos sem confirmação; Windows-first.
+
+---
+
+## Fase 0 — Scaffold
+
+### Task 1: Monorepo scaffold
+
+**Files:**
+- Create: `package.json`, `pnpm-workspace.yaml`, `tsconfig.base.json`, `.gitignore`, `.npmrc`
+
+**Step 1: Criar arquivos**
+
+`pnpm-workspace.yaml`:
+```yaml
+packages:
+  - "apps/*"
+  - "packages/*"
+```
+
+`package.json` (raiz):
+```json
+{
+  "name": "multiacc-pokeidle",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "test": "pnpm -r test",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0",
+    "tsx": "^4.19.0"
+  }
+}
+```
+
+`tsconfig.base.json`: `strict: true`, `target: ES2022`, `module: NodeNext`, `moduleResolution: NodeNext`.
+
+`.gitignore`: `node_modules`, `dist`, `.next`, `.env`, `*.log`.
+
+**Step 2: Verificar instalação**
+
+Run: `pnpm install`
+Expected: lockfile gerado sem erros.
+
+**Step 3: Commit**
+
+```bash
+git add .
+git commit -m "chore: scaffold monorepo pnpm"
+```
+
+---
+
+## Fase 1 — Central API (`apps/central-api`)
+
+### Task 2: Boot Fastify + health
+
+**Files:**
+- Create: `apps/central-api/package.json`, `apps/central-api/tsconfig.json`, `apps/central-api/src/server.ts`, `apps/central-api/src/app.ts`
+- Test: `apps/central-api/src/app.test.ts`
+
+**Step 1: Teste falhando**
+
+```ts
+// app.test.ts
+import { describe, it, expect } from "vitest";
+import { buildApp } from "./app.js";
+
+describe("health", () => {
+  it("GET /health retorna ok", async () => {
+    const app = buildApp();
+    const res = await app.inject({ method: "GET", url: "/health" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ status: "ok" });
+  });
+});
+```
+
+**Step 2:** `pnpm --filter central-api test` → FAIL (módulo não existe).
+
+**Step 3:** `app.ts` com `buildApp()` registrando `GET /health`; `server.ts` escuta `PORT` (default 8080).
+
+**Step 4:** teste PASS.
+
+**Step 5:** Commit `feat(central-api): boot fastify com health`.
+
+### Task 3: Prisma + Postgres (users, refresh_tokens, accounts, releases)
+
+**Files:**
+- Create: `apps/central-api/prisma/schema.prisma`, `docker/docker-compose.dev.yml` (Postgres local para dev/test)
+
+**Step 1:** Schema Prisma com os 4 modelos da tabela do design (Section 5 revisada). `accounts.pokeidle_pass_enc` é `Bytes` (nonce||ciphertext).
+
+`docker-compose.dev.yml`: Postgres 16, porta 5432, volume `mpw-dev-db`. Uso exclusivo de dev/CI — **não** é o compose distribuído.
+
+**Step 2:** `pnpm --filter central-api exec prisma migrate dev -n init` com `docker compose -f docker/docker-compose.dev.yml up -d` rodando.
+
+**Step 3:** Teste de integração: `prisma.test.ts` cria user, conta, release; lê de volta; asserta isolamento por `user_id` na query de accounts.
+
+**Step 4:** Commit `feat(central-api): schema prisma e migration inicial`.
+
+### Task 4: Auth — login + JWT access/refresh
+
+**Files:**
+- Create: `apps/central-api/src/auth/routes.ts`, `apps/central-api/src/auth/service.ts`
+- Test: `apps/central-api/src/auth/auth.test.ts`
+
+**Regras:**
+- `POST /auth/login` {username, password} → `{accessToken, refreshToken}`. Argon2id para hash de senha.
+- Access JWT: 15min, payload `{sub: userId, role}`, segredo `JWT_SECRET` (env).
+- Refresh: token opaco (32 bytes random, hex), hash SHA-256 persistido em `refresh_tokens`, expiração 30d.
+- `POST /auth/refresh` {refreshToken} → novo par de tokens, rotaciona refresh (marca `revoked_at` no antigo).
+- `POST /auth/logout` revoga o refresh.
+- Login de user com `active=false` → 401 genérico (mesmo erro de senha errada).
+
+**Steps TDD:** teste falhando (login com user seedado retorna par de tokens; refresh rotaciona e revoga antigo; refresh revogado retorna 401) → implementar → PASS → commit `feat(central-api): auth jwt com refresh rotativo`.
+
+### Task 5: Criptografia de senhas PokeIdle
+
+**Files:**
+- Create: `apps/central-api/src/crypto/secrets.ts`
+- Test: `apps/central-api/src/crypto/secrets.test.ts`
+
+**Implementação:** AES-256-GCM, chave 32B de `SECRETS_KEY` (env, hex). `encrypt(plain): Buffer` = `nonce(12B) || ciphertext || tag(16B)`. `decrypt(buf): string`. Falha de chave ausente no boot = crash imediato (fail-fast).
+
+**Teste:** roundtrip; ciphertext diferente a cada encrypt (nonce aleatório); decrypt com chave errada lança.
+
+Commit `feat(central-api): criptografia aes-gcm de segredos`.
+
+### Task 6: CRUD de accounts (multi-tenant)
+
+**Files:**
+- Create: `apps/central-api/src/accounts/routes.ts`
+- Test: `apps/central-api/src/accounts/accounts.test.ts`
+
+**Endpoints** (todos exigem access JWT válido — plugin `requireAuth` que valida e injeta `request.userId`):
+- `GET /accounts` — só as do `request.userId`
+- `POST /accounts` {label, pokeidleUser, pokeidlePass, proxyUrl?} — senha criptografada antes de persistir; resposta **nunca** inclui senha
+- `PATCH /accounts/:id` — mesmos campos opcionais
+- `DELETE /accounts/:id`
+- `GET /accounts/:id/credentials` — retorna senha **descriptografada** (único endpoint; usado pelo control-plane no start do worker)
+- Acesso a id de outro user → 404 (não 403, para não vazar existência)
+
+**Testes:** isolamento entre dois users; senha nunca em GET /accounts; credentials retorna plaintext correto.
+
+Commit `feat(central-api): crud multi-tenant de contas`.
+
+### Task 7: Releases + endpoint de versão
+
+**Files:**
+- Create: `apps/central-api/src/releases/routes.ts`
+- Test: `apps/central-api/src/releases/releases.test.ts`
+
+**Endpoints:**
+- `GET /version?channel=stable` — release mais recente do canal: `{version, imageDigest, changelog}`
+- `POST /admin/releases` {version, channel, imageDigest, changelog} — role `admin` apenas
+- `GET /admin/releases` — histórico
+
+**Teste:** publica 1.0.0 e 1.1.0, /version retorna 1.1.0; canal beta não vaza para stable; user não-admin recebe 403 no POST.
+
+Commit `feat(central-api): releases e versionamento`.
+
+### Task 8: Seed admin + Dockerfile central-api
+
+**Files:**
+- Create: `apps/central-api/prisma/seed.ts` (cria admin inicial via env `ADMIN_USERNAME`/`ADMIN_PASSWORD`), `docker/Dockerfile.central-api`
+
+**Dockerfile:** multi-stage — deps → build (prisma generate + tsc) → runtime `node:22-slim` com `prisma migrate deploy && node dist/server.js` no entrypoint.
+
+Commit `feat(central-api): seed admin e dockerfile`.
+
+---
+
+## Fase 2 — Control-plane (`apps/control-plane`)
+
+### Task 9: Boot + proxy de auth ao central
+
+**Files:**
+- Create: `apps/control-plane/src/app.ts`, `apps/control-plane/src/session/store.ts`
+- Test: `apps/control-plane/src/session/store.test.ts`
+
+**`SessionStore`:** persiste refresh token em `/data/session.json` (volume `mpw-data`), em memória guarda access token. `getAccessToken()`: se access válido retorna; senão refresh contra central; central inalcançável e refresh válido há <7d → modo grace (retorna flag `offline: true`); expirado → null (UI read-only).
+
+**Testes (mock do central via `fetch` stub):** renova com access expirado; grace quando central cai; grace expirada retorna null.
+
+Commit `feat(control-plane): session store com grace offline`.
+
+### Task 10: Guard de rotas locais
+
+**Files:**
+- Create: `apps/control-plane/src/auth/guard.ts`
+
+Plugin Fastify `requireSession`: 401 se `SessionStore.getAccessToken()` for null. Endpoints de dados (`/accounts`, `/workers/*`) protegidos; `/auth/*` e `/health` abertos. Workers em execução jamais são tocados por falha de auth (teste: guard 401 não chama docker).
+
+Commit `feat(control-plane): guard de sessão`.
+
+### Task 11: ContainerOrchestrator (dockerode)
+
+**Files:**
+- Create: `apps/control-plane/src/orchestrator/orchestrator.ts`, `apps/control-plane/src/orchestrator/types.ts`
+- Test: `apps/control-plane/src/orchestrator/orchestrator.test.ts`
+
+**Interface** (ponto de extensão para Swarm/K8s futuro):
+```ts
+export interface ContainerOrchestrator {
+  createWorker(cfg: WorkerConfig): Promise<string>; // retorna container id
+  startWorker(id: string): Promise<void>;
+  stopWorker(id: string, timeoutSec: number): Promise<void>; // SIGTERM, drain
+  removeWorker(id: string): Promise<void>;
+  listWorkers(): Promise<WorkerStatus[]>;
+  workerLogs(id: string, tail: number): Promise<string>;
+  pullImage(ref: string): Promise<void>;
+}
+```
+
+`WorkerConfig`: `{accountId, imageRef, env: Record<string,string>, labels}`.
+`WorkerStatus`: `{id, accountId, state, health, startedAt, restartCount}`.
+
+Implementação `DockerOrchestrator`: nome `mpw-worker-<accountId>`, labels `mpw.managed=true`, `mpw.account-id`, volume `mpw-profile-<accountId>` em `/profile`, `HostConfig.AutoRemove=false` (restart gerenciado por nós).
+
+**Testes de integração** (Docker real, imagem `alpine` como fake worker — rodar com `DOCKER_HOST` disponível; skip se indisponível): ciclo create→start→stop→remove; listWorkers filtra por label.
+
+Commit `feat(control-plane): docker orchestrator`.
+
+### Task 12: Supervisor de workers (backoff + crash-loop)
+
+**Files:**
+- Create: `apps/control-plane/src/supervisor/supervisor.ts`
+- Test: `apps/control-plane/src/supervisor/supervisor.test.ts` (orchestrator fake injetado)
+
+**Regras:** poll a cada 10s do `listWorkers()`; worker desejado=running mas exited → restart com backoff 1m, 2m, 5m, teto 15m (por accountId, em memória); 3 falhas seguidas → status `degraded` no snapshot. Snapshot exposto via `GET /workers/status` para a UI.
+
+**Testes:** backoff dobra até o teto; degraded após 3; sucesso reseta contador.
+
+Commit `feat(control-plane): supervisor com backoff`.
+
+### Task 13: Rotas de workers (start/stop/restart)
+
+**Files:**
+- Create: `apps/control-plane/src/workers/routes.ts`
+- Test: `apps/control-plane/src/workers/routes.test.ts` (fetch stub do central + orchestrator fake)
+
+**Fluxo de start:** `POST /workers/:accountId/start` → busca credenciais em `GET central /accounts/:id/credentials` (com access token) → monta env (`ACCOUNT_ID`, `POKEIDLE_USER`, `POKEIDLE_PASS`, `PROXY_URL?`) → `createWorker` → `startWorker`. Credenciais **só em memória**, nunca em disco/log.
+
+Stop: `stopWorker(id, 30)` (tempo de drain) + `removeWorker`.
+
+**Teste:** start monta env correta incluindo proxy; env não vaza em logs.
+
+Commit `feat(control-plane): rotas de ciclo de vida de workers`.
+
+### Task 14: SSE de logs e status
+
+**Files:**
+- Create: `apps/control-plane/src/stream/routes.ts`
+
+`GET /workers/:accountId/logs/stream` — SSE, tail do orchestrator + follow. `GET /events` — SSE do snapshot do supervisor a cada mudança de estado.
+
+Commit `feat(control-plane): streaming sse de logs e status`.
+
+### Task 15: Update manager
+
+**Files:**
+- Create: `apps/control-plane/src/update/manager.ts`
+- Test: `apps/control-plane/src/update/manager.test.ts`
+
+**Fluxo:** `checkForUpdate()` no boot + intervalo 6h → `GET /version` no central → compara com `CURRENT_VERSION` (env, injetada pelo compose a partir da tag). Se nova e auto-update ligado (`AUTO_UPDATE=true` ou via `POST /update/settings` persistido em `/data/settings.json`): `pullImage(worker:newTag)` → recreate rolling de workers (stop→remove→create→start, um por vez) → grava digest anterior em `/data/rollback.json` → sobe **updater container** efêmero (`ghcr.io/<owner>/mpw-updater:<tag>`) com env `TARGET_TAG` e socket montado; updater recria `control-plane` e `web` com a nova tag e se autodestrói. Falha de pull → mantém tudo, status `update_failed` no `/update/status`.
+
+**Testes (orchestrator + fetch fake):** rolling recria um por vez; falha de pull aborta sem tocar workers; rollback.json escrito antes do updater.
+
+Commit `feat(control-plane): update manager com rolling e rollback`.
+
+### Task 16: Dockerfile control-plane
+
+**Files:**
+- Create: `docker/Dockerfile.control-plane`
+
+Runtime precisa do CLI/socket apenas via `/var/run/docker.sock` montado — sem Docker CLI dentro (dockerode puro). Volume `mpw-data` em `/data`.
+
+Commit `feat(control-plane): dockerfile`.
+
+---
+
+## Fase 3 — Worker (`packages/worker`)
+
+### Task 17: Pesquisa PokeIdle (BLOQUEANTE para Task 19)
+
+Investigar e documentar em `packages/worker/GAME.md`:
+- URL do jogo e fluxo de login (form? OAuth? sessão em cookie/localStorage?)
+- Seletores DOM: botão de login, indicadores de "logado", ações idle principais (coletar/batalhar/curar)
+- Comportamento anti-bot óbvio (CAPTCHA, rate limit, detecção de headless)
+
+Sem código — documento de referência para o módulo `game/`.
+
+Commit `docs(worker): pesquisa de mecânica do pokeidle`.
+
+### Task 18: Esqueleto do worker + health
+
+**Files:**
+- Create: `packages/worker/src/index.ts`, `packages/worker/src/health.ts`, `packages/worker/src/config.ts`
+- Test: `packages/worker/src/config.test.ts`
+
+`config.ts` valida env com falha clara (`ACCOUNT_ID`, `POKEIDLE_USER`, `POKEIDLE_PASS` obrigatórias; `PROXY_URL` opcional; `GAME_URL` default da pesquisa). HTTP `/health` na porta 3001 retorna `{state: "booting"|"logging-in"|"in-game"|"error", lastAction, lastError, uptimeSec}`.
+
+Commit `feat(worker): esqueleto com health e config`.
+
+### Task 19: Módulo game (login + loop)
+
+**Files:**
+- Create: `packages/worker/src/game/session.ts`, `packages/worker/src/game/loop.ts`, `packages/worker/src/game/selectors.ts`
+- Test: `packages/worker/src/game/loop.test.ts`
+
+`selectors.ts` — todos os seletores do GAME.md centralizados (única fonte quando o jogo mudar).
+`session.ts` — `launchBrowser(proxyUrl?, profileDir)` (Chromium headless via Playwright, `userDataDir=/profile`), `ensureLoggedIn(page)` (detecta sessão viva do perfil antes de relogar).
+`loop.ts` — `runGameLoop(page, actions, {minDelayMs, maxDelayMs})`: executa ações em rodízio com delay aleatório uniforme (jitter), registra `lastAction`, captura erros por ação sem derrubar o loop (erro consecutivo ×5 → throw para o supervisor).
+
+**Teste (page fake):** jitter dentro do intervalo; 5 erros consecutivos propagam; sucesso reseta.
+
+Commit `feat(worker): game loop com jitter e tolerância a erro`.
+
+### Task 20: Drain gracioso + Dockerfile worker
+
+**Files:**
+- Modify: `packages/worker/src/index.ts`
+- Create: `docker/Dockerfile.worker`
+
+`SIGTERM` → para de agendar novas ações, aguarda ação corrente (timeout 20s), `browser.close()`, exit 0. Teste: SIGTERM durante ação fecha browser (mock) antes do exit.
+
+Dockerfile: base `mcr.microsoft.com/playwright:v1.49.0-noble`, copia dist, `CMD ["node","dist/index.js"]`, volume `/profile` declarado.
+
+Commit `feat(worker): drain sigterm e dockerfile`.
+
+---
+
+## Fase 4 — UI (`apps/web`)
+
+### Task 21: Boot Next.js + cliente de API
+
+**Files:**
+- Create: `apps/web/` (create-next-app, App Router, Tailwind, src/), `apps/web/lib/api.ts`
+
+`api.ts`: `apiFetch(path, opts)` → base `http://localhost:4000` (env `CONTROL_PLANE_URL`), anexa session cookie, em 401 redireciona `/login`. Tipos de `packages/shared`.
+
+Commit `feat(web): boot next.js com api client`.
+
+### Task 22: Login
+
+**Files:**
+- Create: `apps/web/app/login/page.tsx`
+
+Form usuário/senha → `POST control-plane /auth/login` → cookie http-only de sessão local → redirect `/`. Erro 401 mostra "credenciais inválidas". Estado offline (central caiu, grace ativa) mostra banner amarelo "modo offline — alterações limitadas".
+
+Commit `feat(web): tela de login`.
+
+### Task 23: Dashboard de contas
+
+**Files:**
+- Create: `apps/web/app/page.tsx`, `apps/web/components/AccountRow.tsx`, `apps/web/components/LogStream.tsx`
+
+Tabela: label, status (badge: running/parado/erro/degraded), última ação, uptime, ações start/stop/restart. SSE `/events` atualiza status em tempo real. Drawer de logs por conta consumindo SSE de logs.
+
+Commit `feat(web): dashboard com status ao vivo`.
+
+### Task 24: Form de conta + teste de proxy
+
+**Files:**
+- Create: `apps/web/app/accounts/new/page.tsx`, `apps/web/app/accounts/[id]/page.tsx`
+
+Campos label, pokeidleUser, pokeidlePass, proxyUrl. Botão "testar proxy" → `POST control-plane /proxy/test` (sobe container efêmero `curl` pelo proxy, retorna IP de saída). Validação de formato de URL no client.
+
+**Nota:** adicionar endpoint `POST /proxy/test` no control-plane (Task implícita — teste falhando primeiro: orchestrator fake recebe create com entrypoint curl e proxy env).
+
+Commit `feat(web): form de conta com teste de proxy`.
+
+### Task 25: Painel de update
+
+**Files:**
+- Create: `apps/web/components/UpdateBadge.tsx`, `apps/web/app/settings/page.tsx`
+
+Badge "v1.3.0 disponível" + changelog quando `/update/status` indica nova versão. Botões: atualizar agora, rollback (digest anterior), toggle auto-update. Erro de update exibido.
+
+Commit `feat(web): painel de updates`.
+
+---
+
+## Fase 5 — Packaging e release
+
+### Task 26: docker-compose distribuído
+
+**Files:**
+- Create: `docker-compose.yml` (raiz), `.env.example`
+
+```yaml
+services:
+  web:
+    image: ghcr.io/<owner>/mpw-web:stable
+    ports: ["3000:3000"]
+    environment: [CONTROL_PLANE_URL=http://control-plane:4000]
+    depends_on: [control-plane]
+  control-plane:
+    image: ghcr.io/<owner>/mpw-control-plane:stable
+    environment:
+      - CENTRAL_API_URL=${CENTRAL_API_URL}
+      - CURRENT_VERSION=${CURRENT_VERSION:-stable}
+      - AUTO_UPDATE=${AUTO_UPDATE:-true}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - mpw-data:/data
+volumes:
+  mpw-data:
+```
+
+`.env.example` documenta `CENTRAL_API_URL` (única variável obrigatória — aponta para sua VPS).
+
+Commit `feat: compose distribuído`.
+
+### Task 27: Updater container
+
+**Files:**
+- Create: `packages/updater/src/index.ts`, `docker/Dockerfile.updater`
+- Test: `packages/updater/src/index.test.ts`
+
+Script único: recebe `TARGET_TAG`, monta socket, pull de `mpw-web:TARGET_TAG` e `mpw-control-plane:TARGET_TAG`, recria ambos com mesmas envs/volumes (lê do inspect do container atual), remove a si mesmo. Falha → recria com `:stable` (rollback).
+
+Commit `feat(updater): container de auto-update`.
+
+### Task 28: CI release (GitHub Actions → GHCR)
+
+**Files:**
+- Create: `.github/workflows/release.yml`
+
+Trigger: tag `v*`. Jobs: test (vitest + Docker service) → buildx das 4 imagens (web, control-plane, worker, updater) → push `ghcr.io/<owner>/mpw-*:<versao>` + retag `:stable` → chamada autenticada `POST /admin/releases` na central com digest (secret `CENTRAL_ADMIN_TOKEN`).
+
+Commit `ci: pipeline de release para ghcr`.
+
+---
+
+## Fase 6 — E2E smoke
+
+### Task 29: E2E local
+
+**Files:**
+- Create: `e2e/smoke.test.ts`, `docker/Dockerfile.worker-mock`, `docker-compose.e2e.yml`
+
+Sobe compose com central-api + Postgres de teste, seed de user, imagem `worker-mock` (HTTP server que responde /health e fica vivo — sem PokeIdle). Playwright: login → cria conta → start worker → asserta status running no dashboard → stop → asserta parado → simula release nova → asserta badge.
+
+Commit `test: e2e smoke do fluxo completo`.
+
+---
+
+## Ordem e dependências
+
+- Fase 0 → 1 → 2 (depende do contrato do central) → 3 (independe de 2; Task 17 pode rodar em paralelo com Fase 2) → 4 (depende de 2) → 5 → 6
+- Cada task termina em commit verde; testes de integração com Docker fazem skip gracioso sem daemon.
