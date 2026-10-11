@@ -3,6 +3,7 @@ import { registerGuard } from "./auth/guard.js";
 import { DockerOrchestrator } from "./orchestrator/orchestrator.js";
 import type { ContainerOrchestrator } from "./orchestrator/types.js";
 import { SessionStore } from "./session/store.js";
+import { registerStreamRoutes } from "./stream/routes.js";
 import { Supervisor } from "./supervisor/supervisor.js";
 import { registerWorkerRoutes } from "./workers/routes.js";
 
@@ -46,6 +47,7 @@ export function buildApp(opts?: BuildAppOpts) {
       process.env.CONTROL_PLANE_URL ??
       "http://host.docker.internal:4000",
   });
+  registerStreamRoutes(app, { orchestrator, supervisor });
 
   app.addHook("onClose", async () => {
     supervisor.stop();

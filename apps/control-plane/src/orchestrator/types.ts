@@ -15,6 +15,8 @@ export interface WorkerStatus {
   restartCount: number;
 }
 
+export type LogLineCallback = (line: string, ts: Date) => void;
+
 export interface ContainerOrchestrator {
   createWorker(cfg: WorkerConfig): Promise<string>;
   startWorker(id: string): Promise<void>;
@@ -22,5 +24,6 @@ export interface ContainerOrchestrator {
   removeWorker(id: string): Promise<void>;
   listWorkers(): Promise<WorkerStatus[]>;
   workerLogs(id: string, tail: number): Promise<string>;
+  followLogs(id: string, onLine: LogLineCallback): Promise<() => Promise<void>>;
   pullImage(ref: string): Promise<void>;
 }

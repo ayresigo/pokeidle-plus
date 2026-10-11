@@ -65,6 +65,7 @@ function criarOrchestratorFake(): OrchestratorFake {
     }),
     listWorkers: vi.fn(async () => fake.workers),
     workerLogs: vi.fn(async () => ""),
+    followLogs: vi.fn(async () => async () => {}),
     pullImage: vi.fn(async () => {}),
   };
   return fake;

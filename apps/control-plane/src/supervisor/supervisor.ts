@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import type {
   ContainerOrchestrator,
   WorkerStatus,
@@ -42,9 +43,11 @@ interface EstadoSupervisao {
 }
 
 export class Supervisor {
+  readonly mudancas = new EventEmitter();
   private estados = new Map<string, EstadoSupervisao>();
   private ultimaLista: WorkerStatus[] = [];
   private ultimosTokens = new Map<string, TokensRenovados>();
+  private ultimoSnapshotSerial = "[]";
   private onTokensRenovados: CallbackTokensRenovados | null = null;
   private timer: NodeJS.Timeout | null = null;
   private emPoll = false;
@@ -152,6 +155,12 @@ export class Supervisor {
             await this.verificarTokens(worker.accountId);
           }
         }
+      }
+      const snapshot = this.getSnapshot();
+      const serial = JSON.stringify(snapshot);
+      if (serial !== this.ultimoSnapshotSerial) {
+        this.ultimoSnapshotSerial = serial;
+        this.mudancas.emit("update", snapshot);
       }
     } finally {
       this.emPoll = false;

@@ -1,5 +1,11 @@
+import { PassThrough } from "node:stream";
 import Docker from "dockerode";
-import type { ContainerOrchestrator, WorkerConfig, WorkerStatus } from "./types.js";
+import type {
+  ContainerOrchestrator,
+  LogLineCallback,
+  WorkerConfig,
+  WorkerStatus,
+} from "./types.js";
 
 export const LABEL_MANAGED = "mpw.managed";
 export const LABEL_ACCOUNT = "mpw.account-id";
@@ -112,6 +118,35 @@ export class DockerOrchestrator implements ContainerOrchestrator {
       follow: false,
     })) as unknown as Buffer;
     return demuxLogs(bruto);
+  }
+
+  async followLogs(
+    id: string,
+    onLine: LogLineCallback,
+  ): Promise<() => Promise<void>> {
+    const stream = (await this.docker.getContainer(id).logs({
+      stdout: true,
+      stderr: true,
+      follow: true,
+      tail: 0,
+    })) as unknown as NodeJS.ReadableStream & { destroy?: () => void };
+    const saida = new PassThrough();
+    this.docker.modem.demuxStream(stream, saida, saida);
+    let buffer = "";
+    saida.on("data", (chunk: Buffer) => {
+      buffer += chunk.toString("utf8");
+      let idx: number;
+      while ((idx = buffer.indexOf("\n")) >= 0) {
+        const linha = buffer.slice(0, idx).replace(/\r$/, "");
+        buffer = buffer.slice(idx + 1);
+        if (linha) onLine(linha, new Date());
+      }
+    });
+    return async () => {
+      saida.removeAllListeners("data");
+      saida.destroy();
+      stream.destroy?.();
+    };
   }
 
   async pullImage(ref: string): Promise<void> {

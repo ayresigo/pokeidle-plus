@@ -60,7 +60,9 @@ class FakeOrchestrator implements ContainerOrchestrator {
   async workerLogs(): Promise<string> {
     return "";
   }
-
+  async followLogs(): Promise<() => Promise<void>> {
+    return async () => {};
+  }
   async pullImage(): Promise<void> {}
 }
 
