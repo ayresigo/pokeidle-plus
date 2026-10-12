@@ -107,3 +107,27 @@ docker compose -f docker-compose.central.yml up -d
   docker compose -f docker-compose.central.yml exec -e ADMIN_USERNAME=amigo -e ADMIN_PASSWORD=senha central-api pnpm db:seed
   docker compose -f docker-compose.central.yml exec db psql -U mpw -d mpw -c "UPDATE users SET role = 'user' WHERE username = 'amigo';"
   ```
+
+## Para o admin: publicar uma versão
+
+O workflow `.github/workflows/release.yml` roda a cada tag `v*`: testa tudo, gera as 5 imagens (`mpw-web`, `mpw-control-plane`, `mpw-worker`, `mpw-updater`, `mpw-central-api`) para `linux/amd64` e `linux/arm64`, publica em `ghcr.io/ayresigo/mpw-*:<versão>`, registra a release na central e só então move a tag do canal (`:stable` ou `:beta`). PRs e pushes na `main` rodam só os testes (`.github/workflows/ci.yml`).
+
+### Pré-requisitos (uma vez)
+
+- O repositório no GitHub em `ayresigo/multiacc-pokeidle` (as imagens vão para `ghcr.io/ayresigo`).
+- Em **Settings → Secrets and variables → Actions**:
+  - secrets `CENTRAL_ADMIN_USERNAME` e `CENTRAL_ADMIN_PASSWORD`: um usuário admin da central;
+  - variable `CENTRAL_API_URL`: a URL HTTPS pública da central (ex.: `https://mpw.exemplo.com`).
+- Depois da primeira release, torne os 5 pacotes públicos: em https://github.com/ayresigo?tab=packages abra cada `mpw-*` → **Package settings** → **Change visibility** → **Public**. Enquanto estiverem privados, os amigos não conseguem baixar as imagens.
+
+### Publicar
+
+```sh
+git tag -a v1.0.0 -m "changelog"
+git push origin v1.0.0
+```
+
+- A tag precisa ser semver com `v` na frente. `v1.0.0` vai para o canal `stable`; uma tag com pré-release (ex.: `v1.1.0-beta.1`) vai para o canal `beta` e move só a tag `:beta`.
+- A versão registrada na central é a tag sem o `v` (`1.0.0`), a mesma embutida nas imagens; é ela que os painéis comparam para saber se há atualização.
+- O changelog que aparece no painel é a mensagem da tag anotada. Sem mensagem (ou com tag leve), vai a lista de commits desde a tag anterior.
+- Se algo falhar no meio, use **Re-run failed jobs** na aba Actions. Release que já existe na central só gera um aviso, e a tag do canal só muda depois que a central aceitou a release.

@@ -1,0 +1,60 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mpw_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mpw_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mpw_test
+      JWT_SECRET: segredo-jwt-de-teste-do-ci-com-mais-de-32-caracteres
+      SECRETS_KEY: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - run: corepack enable
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Prisma generate e migrate deploy
+        run: |
+          pnpm --filter central-api db:generate
+          pnpm --filter central-api exec prisma migrate deploy
+
+      - name: Typecheck
+        run: pnpm --filter central-api --filter control-plane --filter worker --filter updater exec tsc --noEmit -p tsconfig.json
+
+      - name: Testes
+        run: pnpm -r test
+
+      - name: Lint da web
+        run: pnpm --filter web lint
+
+      - name: Build da web
+        run: pnpm --filter web build

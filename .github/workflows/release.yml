@@ -1,0 +1,203 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io/ayresigo
+
+jobs:
+  versao:
+    runs-on: ubuntu-24.04
+    outputs:
+      versao: ${{ steps.semver.outputs.versao }}
+      canal: ${{ steps.semver.outputs.canal }}
+    steps:
+      - id: semver
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          versao="${TAG#v}"
+          semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+          if [[ ! "$versao" =~ $semver ]]; then
+            echo "::error::a tag $TAG não é semver (use vX.Y.Z ou vX.Y.Z-pre.N)"
+            exit 1
+          fi
+          if [[ -n "${BASH_REMATCH[4]}" ]]; then canal=beta; else canal=stable; fi
+          echo "versao=$versao" >> "$GITHUB_OUTPUT"
+          echo "canal=$canal" >> "$GITHUB_OUTPUT"
+          echo "versão $versao, canal $canal"
+
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  build-push:
+    needs: [versao, test]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        imagem: [web, control-plane, worker, updater, central-api]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile.${{ matrix.imagem }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: VERSION=${{ needs.versao.outputs.versao }}
+          tags: ${{ env.REGISTRY }}/mpw-${{ matrix.imagem }}:${{ needs.versao.outputs.versao }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.versao.outputs.versao }}
+          cache-from: type=gha,scope=mpw-${{ matrix.imagem }}
+          cache-to: type=gha,mode=max,scope=mpw-${{ matrix.imagem }}
+
+  publish-release:
+    needs: [versao, build-push]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      worker-digest: ${{ steps.digest.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Anotação da tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: digest
+        name: Digest do worker
+        env:
+          VERSAO: ${{ needs.versao.outputs.versao }}
+        run: |
+          digest="$(docker buildx imagetools inspect "$REGISTRY/mpw-worker:$VERSAO" --format '{{json .Manifest}}' | jq -r '.digest')"
+          if [[ "$digest" != sha256:* ]]; then
+            echo "::error::não consegui ler o digest de $REGISTRY/mpw-worker:$VERSAO"
+            exit 1
+          fi
+          echo "digest=$REGISTRY/mpw-worker@$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Publicar na central
+        env:
+          CENTRAL_API_URL: ${{ vars.CENTRAL_API_URL }}
+          CENTRAL_ADMIN_USERNAME: ${{ secrets.CENTRAL_ADMIN_USERNAME }}
+          CENTRAL_ADMIN_PASSWORD: ${{ secrets.CENTRAL_ADMIN_PASSWORD }}
+          TAG: ${{ github.ref_name }}
+          VERSAO: ${{ needs.versao.outputs.versao }}
+          CANAL: ${{ needs.versao.outputs.canal }}
+          IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          set -euo pipefail
+          : "${CENTRAL_API_URL:?configure a variable CENTRAL_API_URL no repositório}"
+          : "${CENTRAL_ADMIN_USERNAME:?configure o secret CENTRAL_ADMIN_USERNAME}"
+          : "${CENTRAL_ADMIN_PASSWORD:?configure o secret CENTRAL_ADMIN_PASSWORD}"
+          central="${CENTRAL_API_URL%/}"
+
+          changelog=""
+          if [ "$(git cat-file -t "$TAG")" = tag ]; then
+            changelog="$(git tag -l --format='%(contents)' "$TAG")"
+          fi
+          if [ -z "${changelog//[[:space:]]/}" ]; then
+            anterior="$(git describe --tags --abbrev=0 --match 'v*' "$TAG^" 2>/dev/null || true)"
+            if [ -n "$anterior" ]; then
+              changelog="$(git log --oneline "$anterior..$TAG")"
+            else
+              changelog="$(git log --oneline "$TAG")"
+            fi
+          fi
+
+          resposta="$(mktemp)"
+          trap 'rm -f "$resposta"' EXIT
+
+          status="$(jq -n --arg username "$CENTRAL_ADMIN_USERNAME" --arg password "$CENTRAL_ADMIN_PASSWORD" \
+            '{username: $username, password: $password}' \
+            | curl -sS -o "$resposta" -w '%{http_code}' -X POST -H 'content-type: application/json' \
+              --data-binary @- "$central/auth/login")"
+          if [ "$status" != 200 ]; then
+            echo "::error::login na central falhou (HTTP $status)"
+            exit 1
+          fi
+          token="$(jq -r '.accessToken' "$resposta")"
+          refresh="$(jq -r '.refreshToken' "$resposta")"
+          echo "::add-mask::$token"
+          echo "::add-mask::$refresh"
+
+          status="$(jq -n --arg version "$VERSAO" --arg channel "$CANAL" --arg imageDigest "$IMAGE_DIGEST" \
+            --arg changelog "$changelog" \
+            '{version: $version, channel: $channel, imageDigest: $imageDigest, changelog: ($changelog | .[0:8192])}' \
+            | curl -sS -o "$resposta" -w '%{http_code}' -X POST -H 'content-type: application/json' \
+              -H "authorization: Bearer $token" --data-binary @- "$central/admin/releases")"
+
+          jq -n --arg refreshToken "$refresh" '{refreshToken: $refreshToken}' \
+            | curl -sS -o /dev/null -X POST -H 'content-type: application/json' \
+              --data-binary @- "$central/auth/logout" || true
+
+          case "$status" in
+            201) echo "release $VERSAO publicada no canal $CANAL ($IMAGE_DIGEST)" ;;
+            409) echo "::warning::release $VERSAO já estava publicada no canal $CANAL; nada a fazer" ;;
+            *)
+              echo "::error::central respondeu HTTP $status ao publicar a release $VERSAO"
+              cat "$resposta"
+              exit 1
+              ;;
+          esac
+
+  canal:
+    needs: [versao, publish-release]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Mover tag do canal
+        env:
+          VERSAO: ${{ needs.versao.outputs.versao }}
+          CANAL: ${{ needs.versao.outputs.canal }}
+        run: |
+          for imagem in web control-plane worker updater central-api; do
+            docker buildx imagetools create -t "$REGISTRY/mpw-$imagem:$CANAL" "$REGISTRY/mpw-$imagem:$VERSAO"
+          done
