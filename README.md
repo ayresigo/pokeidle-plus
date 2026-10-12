@@ -131,3 +131,24 @@ git push origin v1.0.0
 - A versão registrada na central é a tag sem o `v` (`1.0.0`), a mesma embutida nas imagens; é ela que os painéis comparam para saber se há atualização.
 - O changelog que aparece no painel é a mensagem da tag anotada. Sem mensagem (ou com tag leve), vai a lista de commits desde a tag anterior.
 - Se algo falhar no meio, use **Re-run failed jobs** na aba Actions. Release que já existe na central só gera um aviso, e a tag do canal só muda depois que a central aceitou a release.
+
+## Rodar o E2E
+
+Smoke do fluxo completo (login → criar conta → iniciar → logs → needs-login → parar → aviso de update) num navegador de verdade, contra imagens buildadas localmente e um jogo falso. Nunca fala com o jogo real nem com o GHCR.
+
+```sh
+pnpm install
+pnpm --filter e2e exec playwright install chromium   # uma vez
+pnpm e2e
+```
+
+- Builda `ghcr.io/ayresigo/mpw-{web,control-plane,worker,central-api,fake-game}:e2e` (`VERSION=0.0.1-e2e`) e sobe `e2e/docker-compose.e2e.yml` como projeto `mpw-e2e` (rede `mpw-e2e`, web em `127.0.0.1:3100`, central em `:3101`, jogo falso em `:3102`). Precisa dessas portas livres e do Docker Desktop aberto.
+- O jogo falso (`e2e/fake-game`) aceita só o JWT fake de `e2e/fake-game/token.ts`, manda `field-init`/`field-kill` e tem `POST /__e2e/kick`, que derruba as sessões com WS 4005.
+- No fim, remove os workers que o teste criou (`mpw-worker-<id>`, pelo nome exato) e roda `docker compose -p mpw-e2e down -v`, que só apaga volumes do projeto `mpw-e2e`. Se o teste for interrompido: `pnpm --filter e2e e2e:down`.
+- `E2E_SKIP_BUILD=1` reaproveita as imagens já buildadas; `E2E_KEEP=1` deixa o ambiente de pé para depurar.
+- Recusa rodar se existir um container `mpw-updater` (de uma instalação real), porque o control-plane do teste o inspecionaria. Não rode com a instalação real (`mpw`) com workers ativos: os dois control-planes enxergam os containers com label `mpw.managed=true`.
+- As imagens `:e2e` ficam como cache. Para removê-las, pela tag exata:
+
+```sh
+docker image rm ghcr.io/ayresigo/mpw-web:e2e ghcr.io/ayresigo/mpw-control-plane:e2e ghcr.io/ayresigo/mpw-worker:e2e ghcr.io/ayresigo/mpw-central-api:e2e ghcr.io/ayresigo/mpw-fake-game:e2e
+```

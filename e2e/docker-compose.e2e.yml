@@ -1,0 +1,130 @@
+name: mpw-e2e
+
+x-healthcheck-node: &healthcheck-node
+  interval: 3s
+  timeout: 5s
+  retries: 40
+  start_period: 5s
+
+services:
+  db:
+    image: postgres:16
+    container_name: mpw-e2e-db
+    environment:
+      POSTGRES_USER: mpw
+      POSTGRES_PASSWORD: senha-e2e
+      POSTGRES_DB: mpw
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mpw -d mpw"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+    labels:
+      mpw.e2e: "true"
+
+  central-api:
+    image: ghcr.io/ayresigo/mpw-central-api:e2e
+    pull_policy: never
+    container_name: mpw-e2e-central-api
+    init: true
+    ports:
+      - "127.0.0.1:3101:8080"
+    environment:
+      DATABASE_URL: postgresql://mpw:senha-e2e@db:5432/mpw
+      JWT_SECRET: segredo-jwt-do-e2e-com-mais-de-32-caracteres
+      SECRETS_KEY: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+      ADMIN_USERNAME: admin-e2e
+      ADMIN_PASSWORD: senha-admin-e2e
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-node
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8080/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+    labels:
+      mpw.e2e: "true"
+
+  fake-game:
+    image: ghcr.io/ayresigo/mpw-fake-game:e2e
+    pull_policy: never
+    container_name: mpw-e2e-fake-game
+    init: true
+    ports:
+      - "127.0.0.1:3102:8090"
+    healthcheck:
+      <<: *healthcheck-node
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8090/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+    labels:
+      mpw.e2e: "true"
+
+  control-plane:
+    image: ghcr.io/ayresigo/mpw-control-plane:e2e
+    pull_policy: never
+    container_name: mpw-e2e-control-plane
+    init: true
+    environment:
+      CENTRAL_API_URL: http://central-api:8080
+      IMAGE_REGISTRY: ghcr.io/ayresigo
+      WORKER_IMAGE: ghcr.io/ayresigo/mpw-worker:e2e
+      WORKER_NETWORK: mpw-e2e
+      CONTROL_PLANE_URL: http://control-plane:4000
+      GAME_URL: http://fake-game:8090
+      CURRENT_VERSION: 0.0.1-e2e
+      AUTO_UPDATE: "false"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - data:/data
+    depends_on:
+      central-api:
+        condition: service_healthy
+      fake-game:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-node
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4000/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+    labels:
+      mpw.e2e: "true"
+
+  web:
+    image: ghcr.io/ayresigo/mpw-web:e2e
+    pull_policy: never
+    container_name: mpw-e2e-web
+    init: true
+    ports:
+      - "127.0.0.1:3100:3000"
+    environment:
+      CONTROL_PLANE_URL: http://control-plane:4000
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-node
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/login').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+    labels:
+      mpw.e2e: "true"
+
+networks:
+  default:
+    name: mpw-e2e
+
+volumes:
+  db: {}
+  data: {}
