@@ -94,6 +94,9 @@ function criarOrchestratorFake(dir: string): OrchestratorFake {
       }
       return "updater-1";
     }),
+    createOneShot: vi.fn(async () => "oneshot"),
+    waitOneShot: vi.fn(async () => ({ exitCode: 0, stdout: "" })),
+    removeOneShot: vi.fn(async () => {}),
   };
   return fake;
 }

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   ContainerOrchestrator,
+  ResultadoOneShot,
   WorkerConfig,
   WorkerInspect,
   WorkerStatus,
@@ -93,6 +94,13 @@ class FakeOrchestrator implements ContainerOrchestrator {
   async createUpdater(): Promise<string> {
     return "updater";
   }
+  async createOneShot(): Promise<string> {
+    return "oneshot";
+  }
+  async waitOneShot(): Promise<ResultadoOneShot> {
+    return { exitCode: 0, stdout: "" };
+  }
+  async removeOneShot(): Promise<void> {}
 }
 
 describe("calcularBackoff", () => {

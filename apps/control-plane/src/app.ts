@@ -1,7 +1,10 @@
 import Fastify from "fastify";
+import { registerAccountsRoutes } from "./accounts/routes.js";
 import { registerGuard } from "./auth/guard.js";
 import { DockerOrchestrator } from "./orchestrator/orchestrator.js";
 import type { ContainerOrchestrator } from "./orchestrator/types.js";
+import { registerProxyRoutes } from "./proxy/routes.js";
+import { registerSessionRoutes } from "./session/routes.js";
 import { SessionStore } from "./session/store.js";
 import { registerStreamRoutes } from "./stream/routes.js";
 import { Supervisor } from "./supervisor/supervisor.js";
@@ -64,6 +67,9 @@ export function buildApp(opts?: BuildAppOpts) {
   });
   registerStreamRoutes(app, { orchestrator, supervisor });
   registerUpdateRoutes(app, { updateManager });
+  registerSessionRoutes(app, sessionStore);
+  registerAccountsRoutes(app, { sessionStore, centralApiUrl });
+  registerProxyRoutes(app, orchestrator);
 
   app.addHook("onClose", async () => {
     supervisor.stop();

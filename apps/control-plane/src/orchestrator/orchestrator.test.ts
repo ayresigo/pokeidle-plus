@@ -207,4 +207,58 @@ describe.skipIf(!dockerDisponivel)("DockerOrchestrator", () => {
     },
     60_000,
   );
+
+  it(
+    "one-shot: roda, captura stdout e exit code 0, e é removido",
+    async () => {
+      const id = await orchestrator.createOneShot(IMAGEM, ["echo", "ok"]);
+      criados.push(id);
+
+      const resultado = await orchestrator.waitOneShot(id, 20_000);
+      expect(resultado).toEqual({ exitCode: 0, stdout: "ok\n" });
+      const workers = await orchestrator.listWorkers();
+      expect(workers.map((w: WorkerStatus) => w.id)).not.toContain(id);
+
+      await orchestrator.removeOneShot(id);
+      await expect(docker.getContainer(id).inspect()).rejects.toMatchObject({
+        statusCode: 404,
+      });
+    },
+    60_000,
+  );
+
+  it(
+    "one-shot: devolve exit code diferente de zero",
+    async () => {
+      const id = await orchestrator.createOneShot(IMAGEM, ["sh", "-c", "echo falhou >&2; exit 3"]);
+      criados.push(id);
+
+      const resultado = await orchestrator.waitOneShot(id, 20_000);
+      expect(resultado).toEqual({ exitCode: 3, stdout: "" });
+
+      await orchestrator.removeOneShot(id);
+      await expect(docker.getContainer(id).inspect()).rejects.toMatchObject({
+        statusCode: 404,
+      });
+    },
+    60_000,
+  );
+
+  it(
+    "one-shot: estoura timeout e remove container ainda rodando",
+    async () => {
+      const id = await orchestrator.createOneShot(IMAGEM, ["sleep", "60"]);
+      criados.push(id);
+
+      await expect(orchestrator.waitOneShot(id, 1_000)).rejects.toThrow(/timeout/);
+      expect((await docker.getContainer(id).inspect()).State.Running).toBe(true);
+
+      await orchestrator.removeOneShot(id);
+      await expect(docker.getContainer(id).inspect()).rejects.toMatchObject({
+        statusCode: 404,
+      });
+      await expect(orchestrator.removeOneShot(id)).resolves.toBeUndefined();
+    },
+    60_000,
+  );
 });

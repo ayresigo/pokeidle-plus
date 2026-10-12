@@ -3,6 +3,7 @@ import Docker from "dockerode";
 import type {
   ContainerOrchestrator,
   LogLineCallback,
+  ResultadoOneShot,
   UpdaterConfig,
   WorkerConfig,
   WorkerInspect,
@@ -207,5 +208,57 @@ export class DockerOrchestrator implements ContainerOrchestrator {
       },
     });
     return container.id;
+  }
+
+  async createOneShot(image: string, cmd: string[]): Promise<string> {
+    const opcoes: Docker.ContainerCreateOptions = {
+      Image: image,
+      Cmd: cmd,
+      Labels: { [LABEL_MANAGED]: "false" },
+      HostConfig: {
+        AutoRemove: false,
+        ...(this.network ? { NetworkMode: this.network } : {}),
+      },
+    };
+    const container = await this.docker
+      .createContainer(opcoes)
+      .catch(async (erro: { statusCode?: number }) => {
+        if (erro.statusCode !== 404) throw erro;
+        await this.pullImage(image);
+        return this.docker.createContainer(opcoes);
+      });
+    return container.id;
+  }
+
+  async waitOneShot(id: string, timeoutMs: number): Promise<ResultadoOneShot> {
+    const container = this.docker.getContainer(id);
+    await container.start();
+    let timer: NodeJS.Timeout | undefined;
+    const limite = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`timeout de ${timeoutMs}ms aguardando container one-shot`)),
+        timeoutMs,
+      );
+    });
+    try {
+      const { StatusCode }: { StatusCode: number } = await Promise.race([container.wait(), limite]);
+      const bruto = (await container.logs({
+        stdout: true,
+        stderr: false,
+        follow: false,
+      })) as unknown as Buffer;
+      return { exitCode: StatusCode, stdout: demuxLogs(bruto) };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async removeOneShot(id: string): Promise<void> {
+    await this.docker
+      .getContainer(id)
+      .remove({ force: true })
+      .catch((erro: { statusCode?: number }) => {
+        if (erro.statusCode !== 404) throw erro;
+      });
   }
 }

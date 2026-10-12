@@ -2,7 +2,7 @@ import { mkdtemp, readFile, writeFile, mkdir, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SessionStore } from "./store.js";
+import { ErroCentralInalcancavel, ErroCredenciaisInvalidas, SessionStore } from "./store.js";
 
 function fabricarJwt(expSegundos: number): string {
   const b64url = (obj: object) =>
@@ -59,6 +59,24 @@ describe("SessionStore", () => {
     const resultado = await store.getAccessToken();
     expect(resultado.offline).toBe(false);
     expect(resultado.token).toBeTruthy();
+  });
+
+  it("login com 401 do central lança ErroCredenciaisInvalidas", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(respostaJson(401, { error: "x" })));
+    const store = new SessionStore(dir, CENTRAL);
+    await expect(store.login("admin", "errada")).rejects.toBeInstanceOf(ErroCredenciaisInvalidas);
+  });
+
+  it("login com 5xx do central lança ErroCentralInalcancavel", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(respostaJson(502, { error: "x" })));
+    const store = new SessionStore(dir, CENTRAL);
+    await expect(store.login("admin", "senha")).rejects.toBeInstanceOf(ErroCentralInalcancavel);
+  });
+
+  it("login com falha de rede lança ErroCentralInalcancavel", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("fetch failed")));
+    const store = new SessionStore(dir, CENTRAL);
+    await expect(store.login("admin", "senha")).rejects.toBeInstanceOf(ErroCentralInalcancavel);
   });
 
   it("renova com access expirado via refresh no central", async () => {

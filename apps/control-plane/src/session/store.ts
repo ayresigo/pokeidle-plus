@@ -13,6 +13,10 @@ interface SessaoPersistida {
 const GRACE_MS = 7 * 24 * 3600 * 1000;
 const MARGEM_EXPIRACAO_MS = 30 * 1000;
 
+export class ErroCredenciaisInvalidas extends Error {}
+
+export class ErroCentralInalcancavel extends Error {}
+
 function decodificarExp(jwt: string): number {
   const payload = jwt.split(".")[1];
   const decodificado = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { exp: number };
@@ -54,11 +58,22 @@ export class SessionStore {
   }
 
   async login(username: string, password: string): Promise<void> {
-    const resposta = await fetch(`${this.centralApiUrl}/auth/login`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
+    let resposta: Response;
+    try {
+      resposta = await fetch(`${this.centralApiUrl}/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+    } catch {
+      throw new ErroCentralInalcancavel("central inalcançável no login");
+    }
+    if (resposta.status === 401) {
+      throw new ErroCredenciaisInvalidas("credenciais inválidas");
+    }
+    if (resposta.status >= 500) {
+      throw new ErroCentralInalcancavel(`central respondeu ${resposta.status} no login`);
+    }
     if (!resposta.ok) {
       throw new Error(`login falhou: ${resposta.status}`);
     }
