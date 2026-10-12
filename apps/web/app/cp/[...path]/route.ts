@@ -21,7 +21,42 @@ const CABECALHOS_RESPOSTA_IGNORADOS = [
   "content-encoding",
 ];
 
+const HOSTS_LOCAIS = ["localhost", "127.0.0.1", "[::1]"];
+
+function hostPermitido(host: string): boolean {
+  let nome: string;
+  try {
+    nome = new URL(`http://${host}`).hostname;
+  } catch {
+    return false;
+  }
+  if (HOSTS_LOCAIS.includes(nome)) return true;
+  const extras = (process.env.ALLOWED_HOSTS ?? "")
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+  return extras.includes(host.toLowerCase()) || extras.includes(nome);
+}
+
+function origemPermitida(origem: string, host: string): boolean {
+  try {
+    return new URL(origem).host === new URL(`http://${host}`).host;
+  } catch {
+    return false;
+  }
+}
+
 async function encaminhar(request: NextRequest, ctx: RouteContext<"/cp/[...path]">): Promise<Response> {
+  const host = request.headers.get("host");
+  if (host === null || !hostPermitido(host)) {
+    return Response.json({ error: "host não permitido" }, { status: 403 });
+  }
+  const temCorpo = request.method !== "GET" && request.method !== "HEAD";
+  const origem = request.headers.get("origin");
+  if (temCorpo && origem !== null && !origemPermitida(origem, host)) {
+    return Response.json({ error: "origem não permitida" }, { status: 403 });
+  }
+
   const { path } = await ctx.params;
   const base = (process.env.CONTROL_PLANE_URL ?? "http://localhost:4000").replace(/\/+$/, "");
   const destino = new URL(`${base}/${path.map(encodeURIComponent).join("/")}`);
@@ -29,8 +64,6 @@ async function encaminhar(request: NextRequest, ctx: RouteContext<"/cp/[...path]
 
   const cabecalhos = new Headers(request.headers);
   for (const nome of CABECALHOS_REQUISICAO_IGNORADOS) cabecalhos.delete(nome);
-
-  const temCorpo = request.method !== "GET" && request.method !== "HEAD";
 
   let upstream: Response;
   try {
