@@ -5,6 +5,7 @@ import { HealthState, type Tokens } from "../health.js";
 import type { HttpFetch } from "../http.js";
 import { criarJwt, respostaJson } from "./__fixtures__/jwt.js";
 import {
+  AuthAdiadaError,
   AuthIndisponivelError,
   AuthManager,
   LoginError,
@@ -34,6 +35,9 @@ const configBase: WorkerConfig = {
   healthPort: 3001,
   solverApiUrl: "https://api.2captcha.com",
   turnstileSitekey: undefined,
+  gameWsUrl: "wss://jogo.example/ws",
+  gameWsShards: 88,
+  huntSlug: undefined,
 };
 
 let gerente: AuthManager | null = null;
@@ -580,6 +584,44 @@ describe("AuthManager", () => {
 
     await expect(manager.invalidar()).resolves.toEqual(doSolver);
     expect(solver.getTokens).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidar com refresh transitório lança AuthAdiadaError e mantém os tokens", async () => {
+    vi.useFakeTimers();
+    const salvos = { accessToken: "token-opaco", refreshToken: "refresh-1" };
+    const solver = provedor({ accessToken: "x", refreshToken: "y" });
+    const health = new HealthState(salvos);
+    const manager = criarGerente(health, {
+      stored: provedor(salvos),
+      solver,
+      fetchJogo: jogo({ "https://jogo.example/api/auth/refresh": () => respostaJson({}, 503) }),
+    });
+    await manager.autenticar();
+
+    const invalidacao = erroDe(manager.invalidar());
+    await vi.advanceTimersByTimeAsync(7_000);
+    const erro = await invalidacao;
+
+    expect(erro).toBeInstanceOf(AuthAdiadaError);
+    expect(erro).not.toBeInstanceOf(AuthIndisponivelError);
+    expect(solver.getTokens).not.toHaveBeenCalled();
+    expect(health.snapshot().state).not.toBe("needs-login");
+    await expect(manager.getTokens()).resolves.toEqual(salvos);
+  });
+
+  it("invalidar com refresh recusado e sem solver lança AuthIndisponivelError", async () => {
+    const salvos = { accessToken: "token-opaco", refreshToken: "refresh-morto" };
+    const health = new HealthState(salvos);
+    const manager = criarGerente(health, {
+      stored: provedor(salvos),
+      solver: provedor(new AuthIndisponivelError("sem solver")),
+      fetchJogo: jogo({ "https://jogo.example/api/auth/refresh": () => respostaJson({}, 401) }),
+    });
+    await manager.autenticar();
+
+    const erro = await erroDe(manager.invalidar());
+    expect(erro).toBeInstanceOf(AuthIndisponivelError);
+    expect(health.snapshot().state).toBe("needs-login");
   });
 
   it("autenticar concorrente compartilha o mesmo fluxo", async () => {

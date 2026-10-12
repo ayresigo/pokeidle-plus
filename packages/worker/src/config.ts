@@ -11,6 +11,9 @@ export interface WorkerConfig {
   healthPort: number;
   solverApiUrl: string;
   turnstileSitekey: string | undefined;
+  gameWsUrl: string;
+  gameWsShards: number;
+  huntSlug: string | undefined;
 }
 
 export type WorkerEnv = Record<string, string | undefined>;
@@ -18,7 +21,16 @@ export type WorkerEnv = Record<string, string | undefined>;
 const DEFAULT_HEALTH_PORT = 3001;
 const DEFAULT_SOLVER_API_URL = "https://api.2captcha.com";
 const PROXY_PROTOCOLS: Record<string, true> = { "http:": true, "https:": true, "socks5:": true };
-const SOLVER_PROTOCOLS: Record<string, true> = { "http:": true, "https:": true };
+const HTTP_PROTOCOLS: Record<string, true> = { "http:": true, "https:": true };
+const WS_PROTOCOLS: Record<string, true> = {
+  "http:": true,
+  "https:": true,
+  "ws:": true,
+  "wss:": true,
+};
+const WS_SCHEME: Record<string, string> = { "http:": "ws:", "https:": "wss:" };
+const DEFAULT_WS_PATH = "/ws";
+const DEFAULT_WS_SHARDS = 88;
 
 export class ConfigError extends Error {
   readonly problems: readonly string[];
@@ -50,6 +62,12 @@ function parsePort(value: string): number | null {
   return port >= 1 && port <= 65535 ? port : null;
 }
 
+function resolverWsUrl(base: string, path: string): string {
+  const url = new URL(path, base);
+  url.protocol = WS_SCHEME[url.protocol] ?? url.protocol;
+  return url.toString();
+}
+
 export function loadConfig(env: WorkerEnv): WorkerConfig {
   const problems: string[] = [];
   const missing = (name: string) => problems.push(`${name} ausente`);
@@ -66,9 +84,31 @@ export function loadConfig(env: WorkerEnv): WorkerConfig {
   const healthPortRaw = read(env, "HEALTH_PORT");
   const solverApiUrl = read(env, "SOLVER_API_URL")?.replace(/\/+$/, "") ?? DEFAULT_SOLVER_API_URL;
   const turnstileSitekey = read(env, "TURNSTILE_SITEKEY");
+  const gameWsUrlRaw = read(env, "GAME_WS_URL");
+  const gameWsPath = read(env, "GAME_WS_PATH") ?? DEFAULT_WS_PATH;
+  const gameWsShardsRaw = read(env, "GAME_WS_SHARDS");
+  const huntSlug = read(env, "HUNT_SLUG");
 
   if (!accountId) problems.push("ACCOUNT_ID ausente");
   if (!gameUrl) problems.push("GAME_URL ausente");
+  else if (!validUrl(gameUrl, HTTP_PROTOCOLS)) {
+    problems.push("GAME_URL inválida (esperado URL http:// ou https://)");
+  }
+
+  if (gameWsUrlRaw && !validUrl(gameWsUrlRaw, WS_PROTOCOLS)) {
+    problems.push("GAME_WS_URL inválida (esperado URL ws://, wss://, http:// ou https://)");
+  }
+
+  if (!gameWsPath.startsWith("/")) {
+    problems.push("GAME_WS_PATH inválido (esperado path começando com /)");
+  }
+
+  let gameWsShards = DEFAULT_WS_SHARDS;
+  if (gameWsShardsRaw) {
+    const shards = /^\d+$/.test(gameWsShardsRaw) ? Number(gameWsShardsRaw) : 0;
+    if (shards < 1) problems.push("GAME_WS_SHARDS inválido (esperado inteiro >= 1)");
+    else gameWsShards = shards;
+  }
 
   if (solverKey) {
     if (!pokeidleUser) problems.push("POKEIDLE_USER ausente (obrigatória com SOLVER_KEY)");
@@ -89,7 +129,7 @@ export function loadConfig(env: WorkerEnv): WorkerConfig {
     problems.push("PROXY_URL inválida (esperado URL http://, https:// ou socks5://)");
   }
 
-  if (!validUrl(solverApiUrl, SOLVER_PROTOCOLS)) {
+  if (!validUrl(solverApiUrl, HTTP_PROTOCOLS)) {
     problems.push("SOLVER_API_URL inválida (esperado URL http:// ou https://)");
   }
 
@@ -115,5 +155,8 @@ export function loadConfig(env: WorkerEnv): WorkerConfig {
     healthPort,
     solverApiUrl,
     turnstileSitekey,
+    gameWsUrl: resolverWsUrl(gameWsUrlRaw ?? gameUrl, gameWsPath),
+    gameWsShards,
+    huntSlug,
   };
 }

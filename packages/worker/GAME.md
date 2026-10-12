@@ -19,7 +19,7 @@ Existem vários jogos com nome parecido. O alvo deste projeto é **Poke Idle Wor
 - Front-end **Next.js (App Router, Turbopack)**; páginas de auth renderizadas no servidor, jogo (`/play`) é client-side. Fonte: HTML de <https://poke.idleworld.online/login> (chunks `/_next/static/chunks/*`, `self.__next_f`).
 - O jogo em si é um **canvas WebGL fixo de 1600×832** com overlays de DOM para janelas (mapa, mercado, chat, avisos). Fonte: PokeGrid `index.html` ("o canvas do jogo e fixo nesse tamanho", proporção 1600/832) — <https://github.com/soufoka/PokeGrid-source/blob/main/index.html>
 - **O farm é server-authoritative**: o jogo continua farmando mesmo com a página a 1 fps (ou em modo "soneca" offline), porque roda no servidor. Fonte: PokeGrid FAQ, seção de modos de tela ("o farm continua, porque roda no servidor") — <https://github.com/soufoka/PokeGrid-source/blob/main/FAQ.md>
-- Comunicação em jogo: **WebSocket (protocolo Socket.IO — mensagens com prefixo `42`)** + REST `/api/*` com Bearer token. Fonte: interceptor de WebSocket do userscript bettermap (strip do prefixo `42`) e coletor do PokeGrid (`index.html`, wrapper de `window.fetch` e `window.WebSocket`).
+- Comunicação em jogo: **WebSocket nativo com mensagens JSON `{type, ...}`** (não é Socket.IO) + REST `/api/*` com Bearer token. Detalhes na seção 4.4. Fonte: chunk <https://poke.idleworld.online/_next/static/chunks/0ar1xg2adjvm_.js> (`GameSocketProvider`, `new WebSocket(...)`, `JSON.parse(e.data)`), lido em 2026-10-11. O prefixo `42` citado pelo userscript bettermap (que faz strip dele no interceptor) não aparece no bundle atual: provavelmente é de uma versão antiga do jogo [INFERENCE]; o probe de 2026-10-11 em `wss://poke.idleworld.online/socket.io/?EIO=4&transport=websocket` falha no upgrade (close 1006), enquanto `/ws` abre.
 
 ## 3. Fluxo de login
 
@@ -52,7 +52,7 @@ Fonte: chunk <https://poke.idleworld.online/_next/static/chunks/3aqjofv7-1o3x.js
 - Tokens ficam em **`sessionStorage["pokeweb:tokens"]`** como JSON `{ accessToken, refreshToken }` (há migração legada de `localStorage` para `sessionStorage`). Fonte: mesmo chunk de login (funções `saveTokens`/`getTokens`/`clearTokens`).
 - Chamadas autenticadas usam header **`Authorization: Bearer <accessToken>`**; em 401 o cliente tenta refresh uma vez. Fonte: mesmo chunk (`apiGet`/`apiPostAuth`).
 - Pós-login, o cliente chama `GET /api/characters/me` e roteia: com personagem → **`/play`**; sem verificação de e-mail → `/verify-email`; sem personagem → `/create-character`. Fonte: mesmo chunk (`routeAfterAuth`).
-- **Uma sessão viva por conta**: logar a mesma conta em outro lugar derruba a anterior ("Conta em uso"); o servidor fecha o socket com **código 4001** (auth recusada) e o jogo não reconecta sozinho nesse caso. Fonte: PokeGrid `index.html` (comentários do watchdog de sessão, tratamento de WS 4001).
+- **Uma sessão viva por conta**: logar a mesma conta em outro lugar derruba a anterior ("Conta em uso"). Fonte: PokeGrid `index.html` (comentários do watchdog de sessão). O PokeGrid associa isso ao WS **4001**, mas o bundle atual do jogo separa os casos: **4001 = token recusado** (`unauthorized`; o cliente faz refresh e reconecta, e na 2ª seguida espera 10 min) e **4005 = sessão substituída** (`replaced`; o cliente não reconecta). Fonte: `onclose` do `GameSocketProvider` no chunk `0ar1xg2adjvm_.js` (seção 4.4) e probe real (token inválido → close 4001 `"unauthorized"`).
 - Sessão expira no meio do farm com a tela parada (o token do `/me` vence e quem renova é o socket); quedas comuns de ~60 s (restart do servidor) o jogo reconecta sozinho. Fonte: PokeGrid `index.html` (comentário "sessao morta").
 - **Modo Soneca / farm offline**: existe uma landing com "Zzz" em `/`; relogar em menos de ~5 min cancela o farm offline. Fonte: PokeGrid `index.html` (guarda `loginAll`: "logar ali encerra o farm offline") e FAQ.
 
@@ -90,7 +90,7 @@ O jogo é canvas WebGL; o DOM interativo são overlays. Confirmados por ferramen
 
 ### 4.3 Estado do jogo via rede (mais confiável que DOM)
 
-O próprio ecossistema (PokeGrid/bettermap) não scrapeia o canvas: intercepta fetch/WebSocket. Eventos de WS observados (Socket.IO, payload JSON com `type`):
+O próprio ecossistema (PokeGrid/bettermap) não scrapeia o canvas: intercepta fetch/WebSocket. Eventos de WS observados (payload JSON com `type`; protocolo na seção 4.4):
 
 - Recebidos: `field-init` (entrou na hunt; traz `slug`), `field-kill` (kill; traz `speciesName`), `catch-result` (captura; `success`, `speciesName`), `balls` (contagem de pokébolas: `counts`, `expires`, `catalog` com `infinite`), `inventory` (`items`), `pokes` (`list` do time), `analyzer` (resumo de sessão: `seconds`, `balance`), `restart-freeze` (`frozenAt`). Fontes: bettermap userscript; PokeGrid `index.html` (`READ_ALERTS`, comentários do coletor).
 - Enviados: `{type:'enter-hunt', slug}`, `{type:'set-city'}`, `{type:'leave-hunt'}` (ao trocar de mapa/cidade), `{type:'analyzer-clear'}`, `restart-resume` (após clicar em Atualizar no modal de restart). Fonte: PokeGrid `index.html` (`ENTRA_JS`, `VOLTA_JS`, `RESET_SESS`, comentário do destrava).
@@ -100,12 +100,27 @@ Endpoints REST observados (todos com Bearer):
 
 - `GET /api/characters/me` → `{ character, needsEmailVerification }` — fonte: bundle de login + PokeGrid (`NAME_JS`)
 - `GET /api/auth/me` — fonte: chunk `09657nskqmv4n.js` de `/play`
-- `POST /api/game/balls/buy` — body `{ ballId, qty }`, resposta traz `gold`; sem Bearer → 401 — fonte: PokeGrid `index.html` (compra de pokébolas)
+- `POST /api/game/balls/buy` — body `{ ballId, qty }`, resposta `{ counts, gold, bought }`; sem Bearer → 401 — fontes: PokeGrid `index.html` (compra de pokébolas) e chunk `0ui1n94-slw5_.js` (`apiPostAuth("/api/game/balls/buy",{ballId,qty})`)
 - `GET /api/game/depot` → `{ depot: [{ itemId, quantity }] }` — fonte: PokeGrid `DEP_JS`
-- `GET /api/game/map-markers` — hunts/mapa — fonte: PokeGrid `HUNTS_JS`
+- `GET /api/game/map-markers` — **público** (o bundle chama com `fetch` puro, sem Bearer) → `{ map: { w, h }, hunts: [{ slug, name, looktype, level, pixel, area, range }] }`; 454 entradas em 2026-10-11, incluindo cidades com `level: 0` (`cerulean`, `pewter`, `viridian`) — fontes: PokeGrid `HUNTS_JS`, chunk `0ui1n94-slw5_.js` (`fetch("/api/game/map-markers")`, uso de `s.hunts`) e GET real em 2026-10-11
 - `GET /api/game/used-balls` → tentativas de captura por espécie — fonte: PokeGrid coletor
-- `POST /api/game/shop/sell` e `POST /api/game/flint/sell` — venda de itens — fonte: PokeGrid (sell guard)
+- `POST /api/game/shop/sell` — body `{ items: [{ itemId, qty }] }`, resposta `{ gold, goldGained, soldCount }`; `POST /api/game/flint/sell` — body `{ itemId, qty }`, resposta `{ sold, item, goldGained }` — fontes: PokeGrid (sell guard) e chunk `0ui1n94-slw5_.js` (`apiPostAuth`)
 - Estáticos: `/game/items.json` (catálogo de itens, `npcPrice`), `/game/creatures.json` (stats, golpes, loot) — fonte: PokeGrid `HUNTS_JS`/`READ_CATALOG`
+
+### 4.4 WebSocket do jogo (bundle de `/play`)
+
+Fonte de tudo abaixo, salvo indicação: `/play` carrega o `GameWorld` sob demanda (módulo 885197 em `/_next/static/chunks/09657nskqmv4n.js`), que puxa os chunks `16q4ov8qf6xz0.js`, `0fllz2m_ktm3s.js`, `0ar1xg2adjvm_.js`, `26sc7h-33qbis.js`, `0ui1n94-slw5_.js` e `3gc33kj6hnplx.js`. O socket fica em `GameSocketProvider` (`0ar1xg2adjvm_.js`); handlers de jogo em `0ui1n94-slw5_.js`. Todos baixados sem login em 2026-10-11.
+
+- **URL**: base literal `wss://poke.idleworld.online/ws` com **sharding por conta**: `N = Number("88")`; `shard = abs(djb2(sub)) % N`, onde `sub` vem do payload do access JWT (`JSON.parse(atob(token.split(".")[1])).sub`) e `djb2` é `h=5381; h=(h<<5)+h+charCode|0`. Shard 0 → `/ws`; shard `k>0` → `/ws{k}` (se a base não tiver path, soma `k` na porta). Falha ao ler o JWT → base sem shard.
+- **Auth**: o access vai na query: `?token=<accessToken>&v=2`, mais `&cmid=<id>` quando o cliente consegue gerar um id de máquina (`getCmid`, hash de fingerprint de canvas/hardware). Sem header `Authorization`.
+- **Probe real (2026-10-11, token inválido, sem cmid)**: `wss://poke.idleworld.online/ws?token=x&v=2` e `/ws17?...` abrem (upgrade 101 passa pela Cloudflare com o UA padrão do undici) e o servidor fecha com **4001 `"unauthorized"`**; `/socket.io/?EIO=4&transport=websocket` falha no upgrade (1006).
+- **Mensagens**: texto JSON com `type`; o cliente ignora o que não parseia. Envio = `JSON.stringify(obj)`; com o socket fechado o cliente oficial enfileira e manda no `onopen`.
+- **Heartbeat**: a cada 10 s; se nada chegou em 45 s, envia `{"type":"ping"}`; se nada chegar 15 s depois do ping, fecha e reconecta.
+- **Reconexão comum**: `t = min(24000, 1500·2^min(n-1,4))` ms, espera `t + random·t`.
+- **Códigos de close**: `4001` token recusado → `refreshAccess()` e reconecta; na 2ª seguida espera 10 min. `4002` → reload da página (no máximo 1 por minuto). `4003` → manutenção (`/?maintenance=1`). `4005` → `replaced` (sessão substituída), não reconecta. `4006` → `ipLimited`, não reconecta. `4007` → `machineLimited`, não reconecta. `4008` → `/namelock`. `4009` → `/trocar-senha`. Nomes `replaced/ipLimited/machineLimited` vêm do objeto de contexto `{online, replaced, ipLimited, machineLimited, ...}`.
+- **Recebidos** (além dos da seção 4.3): `field-init` (`slug`, `huntKey`, …), `field-none` (saiu do campo), `field-lost` (o cliente reenvia `enter-hunt` após 1 s), `field-teleport-city` (time derrotado → cidade), `hunt-cooldown`/`fishing-cooldown` (`ms`; o cliente reenvia `enter-hunt` após `ms + 100`), `hunt-resume` (`slug`, `name`: hunt em andamento no servidor; se for a hunt atual, o cliente manda `enter-hunt` com `resume: true`), `restart-freeze` (`frozenAt`, `restartedAt`, `boosts: [{key, pct, remainingMs}]`; o modal só aparece se houver boost com `remainingMs > 0`), `restart-resumed` (o cliente recarrega a página), `sleep-ok` (`ghost`), `pokes-chunk`/`poke-delta`/`poke-xp`, `trade-settled`, `autohelper`.
+- **Enviados** (os usados pelo worker): `{type:"enter-hunt", slug, resume}` (`resume` = já houve `field-init` dessa hunt na montagem atual ou veio de `hunt-resume`), `{type:"leave-hunt"}`, `{type:"set-city", slug}`, `{type:"restart-state"}` (pedido do estado de restart ao montar), `{type:"restart-resume"}`, `{type:"balls-get"}`, `{type:"ping"}`. Outros vistos: `inv-get`, `pokes-get`, `analyzer-get`, `analyzer-clear`, `autohelper-get`, `field-get`, `view`, `sleep-mode`, `joy-heal`, `use-heal`, `catch`, `move`, `pvp-*`, `trade-*`, `guild-*`.
+- O cliente oficial reenvia `enter-hunt` a cada 2,5 s de checagem quando passa 10 s sem `field-init`/atividade da hunt.
 
 ## 5. Loop idle (o que o jogador/bot faz)
 
@@ -126,7 +141,7 @@ Frequências observadas no PokeGrid: coleta de inventário a cada 30 s, watchdog
 - **Cloudflare Turnstile no login** (e possivelmente no register): o botão de login fica `disabled` até `cf-turnstile-response` ter valor. PokeGrid, um launcher maduro, **nunca resolve o captcha** — sempre o humano. Fonte: PokeGrid FAQ ("O app nunca resolve captcha. É sempre você… Proposital, não vai mudar") e `loginPanel`. Isto é o principal bloqueio para login 100% automatizado; o bundle tem flag `TURNSTILE_ENABLED`, ou seja, pode estar desligado em alguns contextos — confirmar em runtime.
 - **Cloudflare na borda**: beacon + challenge-platform (`/cdn-cgi/challenge-platform/scripts/jsd/main.js`) injetados em toda página. Fonte: HTML de `/login`.
 - **Verificação de User-Agent/fingerprint**: o PokeGrid remove o token `Electron/` da UA e congela a versão do Chrome "pra passar na Cloudflare". Headless óbvio (UA de HeadlessChrome, `navigator.webdriver`) provavelmente falha ou eleva o score de bot. Fonte: PokeGrid `main.js` (bloco `app.userAgentFallback`).
-- **Uma sessão por conta**: segundo login derruba o primeiro (WS close 4001, "Conta em uso"). Fonte: PokeGrid `index.html`.
+- **Uma sessão por conta**: segundo login derruba o primeiro ("Conta em uso"; no bundle atual, WS close 4005 `replaced`). Fonte: PokeGrid `index.html` e seção 4.4.
 - **Regras oficiais anti-automação**: "Macros, auto-clickers e tools que simulam sua presença ou executam ações repetidas automaticamente não são permitidos" (seção 03); trade com contas botter → ban permanente (seção 09, desde 20/08/2026); multi-conta acima de 4 sem autorização → deleção (seção 10). Fonte: <https://poke.idleworld.online/rules>.
 - **Detecção comportamental server-side**: não documentada publicamente, mas o servidor é autoritativo (kills/capturas passam por ele), então padrões inumanos são detectáveis. [INFERENCE]
 - Rate limit específico de login/ações: não encontrado documentação pública. Ver **Desconhecido**.
@@ -142,16 +157,17 @@ Frequências observadas no PokeGrid: coleta de inventário a cada 30 s, watchdog
 
 ## 8. Desconhecido (não confirmado nesta pesquisa)
 
-- **URL exata do WebSocket** do jogo (host/path, ex.: `/socket.io`): o engine do jogo só carrega após auth e não está nos chunks públicos que baixei. O prefixo `42` (Socket.IO) é confirmado, o endpoint não. Descobrir em runtime na primeira sessão.
+- **WebSocket em sessão autenticada**: URL, sharding, query e códigos de close estão na seção 4.4 (bundle + probe com token inválido). Falta observar uma sessão autenticada ponta a ponta (ver seção 9).
 - **Se o Turnstile está sempre ligado**: o bundle tem feature flag `TURNSTILE_ENABLED`; o HTML atual renderiza `.turnstile-widget`, mas não confirmei se exige token em 100% dos logins (pode variar por IP/score Cloudflare).
-- **Endpoint/body exatos de ações in-game** (heal manual, troca de líder, evolução, mercado buy/sell completos): só `balls/buy`, `shop/sell`, `flint/sell`, `depot`, `map-markers`, `used-balls` foram vistos em código de terceiros; o resto precisa ser sniffado em sessão real.
-- **Formato completo dos eventos WS** além dos campos usados pelo bettermap/PokeGrid (ex.: todos os campos de `field-init`).
+- **Endpoint/body exatos de ações in-game** (heal manual, troca de líder, evolução, mercado de jogadores): os bodies de `balls/buy`, `shop/sell` e `flint/sell` estão confirmados no bundle (seção 4.3); comandos de WS como `use-heal`, `joy-heal`, `switch` e `catch` existem (seção 4.4), mas os payloads não foram analisados.
+- **Formato completo dos eventos WS** além dos campos usados pelo bundle/bettermap/PokeGrid (ex.: todos os campos de `field-init`).
 - **Rate limits numéricos** (login, REST, WS): sem fonte pública.
 - **Detecção de headless/Playwright específica**: nenhuma fonte confirma checagens além de Cloudflare + UA; tratar como risco.
 - **Tela de criação de personagem** (`/create-character`) e verificação de e-mail: fluxo não explorado (requer conta real).
-- Lista completa de slugs de hunts: virá de `/api/game/map-markers` em runtime.
 
-## 9. Pontos de verificação manual (auth do worker)
+## 9. Pontos de verificação manual (worker)
+
+### 9.1 Auth (Task 19)
 
 O que a Task 19 implementou sem conta real e precisa ser confirmado em smoke manual:
 
@@ -161,3 +177,20 @@ O que a Task 19 implementou sem conta real e precisa ser confirmado em smoke man
 - **Refresh rotaciona o refreshToken?** O cliente salva a resposta inteira de `/api/auth/refresh` como `pokeweb:tokens` e só refaz refresh se houver `refreshToken` salvo, o que indica que a resposta traz os dois tokens [INFERENCE]. O worker trata os dois casos (mantém o atual quando não vem novo); confirmar com conta real.
 - **Validade do access token**: o agendamento usa o `exp` do JWT com 60 s de margem (piso de 30 s entre refreshes); confirmar que o access é JWT com `exp`. Se não for, não há renovação proativa: o game client chama `AuthManager.invalidar()` quando o jogo recusar o token.
 - **Contas com 2FA** não são suportadas pelo login automático (`twoFactor` na resposta → needs-login).
+
+### 9.2 Game loop (Task 20)
+
+Implementado a partir do bundle de `/play` (seção 4.4), sem conta real:
+
+- **Sessão autenticada no shard**: confirmar com conta real que o worker recebe `field-init`/`field-kill` e que o shard calculado (88 shards, djb2 do `sub` do JWT) é o mesmo que o navegador usa (DevTools → Network → WS). Overrides: `GAME_WS_URL` (origem do WS), `GAME_WS_PATH` (path base, padrão `/ws`) e `GAME_WS_SHARDS` (padrão 88, valor embutido no bundle).
+- **Sem `cmid`**: o worker não envia `cmid` (é um fingerprint de máquina do navegador; inventar um seria burlar o limite por máquina). Confirmar que o servidor aceita sessão sem `cmid` e se isso leva a 4007 (`machineLimited`).
+- **Headers do WS**: o worker manda `Origin: <GAME_URL>` e o User-Agent padrão do undici. O probe com token inválido passou pela Cloudflare (upgrade 101 + close 4001); confirmar com token válido.
+- **Mensagens ao abrir**: o worker envia `restart-state` e `balls-get`, como o cliente oficial faz ao montar. Confirmar que o servidor responde (`restart-freeze`, `balls`).
+- **Retomada de hunt**: confirmar que, ao reconectar com hunt em andamento, chega `hunt-resume` e que `enter-hunt` com `resume: true` não reinicia o progresso.
+- **Hunt sem `HUNT_SLUG`**: o worker escolhe no map-markers (lido sem `Authorization`, como o cliente oficial) a hunt de menor `level > 0` fora das cidades/ginásios. Pode ser fraca demais para personagens fortes; preferir `HUNT_SLUG`. Depois de 3 `enter-hunt` seguidos sem `field-init`, o lastError vira `HUNT_SLUG inválido ou hunt ignorada: <slug>`.
+- **Drain sem `sleep-mode`**: no SIGTERM o worker para o loop, espera a ação em voo (até 20 s) e fecha o socket com 1000. O bundle tem um Modo Soneca explícito (`{type:"sleep-mode"}` → `sleep-ok` com `ghost`), então talvez fechar o socket sem ele não mantenha o farm offline. Confirmar com conta real se o progresso continua após `docker stop`; se não continuar, enviar `sleep-mode` no drain.
+- **Compra de balls e venda de loot**: os bodies estão confirmados no bundle (seção 4.3), mas ficaram fora desta task. Falta definir a política: qual ball comprar, quantidade, estoque mínimo e quais itens podem ser vendidos sem perder itens valiosos.
+- **Códigos de close**: o worker trata 4001 como auth recusada: invalida no máximo 1 vez a cada 5 min e reconecta; se vier 4001 de novo, vai para needs-login. Se a renovação falhar por motivo transitório (refresh indisponível), ele reconecta com backoff e libera um novo invalidar; só a falha definitiva (refresh recusado e sem solver) leva a needs-login. Isso foi comprovado ponta a ponta contra o servidor real com token falso (docker, 2026-10-11): close 4001 → refresh recusado → needs-login, sem reconexão. Com 4005 → needs-login, 4006/4007 → error e 4008/4009 → needs-login, sempre sem reconectar e com prioridade sobre uma reciclagem em andamento. Confirmar 4005-4009 em produção.
+- **Política de reconexão (decisão do worker, mais conservadora que o bundle)**: quedas comuns e 4002 usam o backoff do bundle (`1,5 s·2^(n−1)` com teto de 24 s, mais jitter) nas 5 primeiras falhas seguidas. Depois disso, o teto sobe para 5 min. O contador só zera quando chega uma mensagem do servidor (abrir e cair logo não conta). Com 4003 (manutenção) o atraso é próprio: 5, 10 e depois 15 min, com jitter de até −20%.
+- **Reciclagem da conexão** (após `restart-resumed`, ou quando `restart-resumed` não chega em 8 s): no máximo 1 reconexão a cada 60 s. Depois de 3 reciclagens sem `field-init`/`field-kill`, o worker para de reciclar e avisa no lastError até chegar um `restart-freeze` com `frozenAt` novo.
+- **Watchdog de stall**: faz leave+enter após 10 min sem kill. Depois de 3 recuperações seguidas sem kill, o lastError vira `hunt <slug> sem kills há <N>min` e as tentativas passam a ser de hora em hora. Um kill zera a contagem.

@@ -21,6 +21,13 @@ export class AuthIndisponivelError extends Error {
   }
 }
 
+export class AuthAdiadaError extends Error {
+  constructor(mensagem: string) {
+    super(mensagem);
+    this.name = "AuthAdiadaError";
+  }
+}
+
 export class LoginError extends Error {
   constructor(mensagem: string) {
     super(mensagem);
@@ -175,6 +182,7 @@ export class AuthManager implements TokenProvider {
   async invalidar(): Promise<Tokens> {
     const resultado = await this.unico(() => this.executarRenovacao());
     if (resultado.ok && this.tokens) return this.tokens;
+    if (!resultado.ok && !resultado.needsLogin) throw new AuthAdiadaError(resultado.motivo);
     throw new AuthIndisponivelError(resultado.ok ? "sem tokens válidos" : resultado.motivo);
   }
 
