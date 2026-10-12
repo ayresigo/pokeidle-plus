@@ -38,7 +38,24 @@ describe("loadConfig", () => {
       proxyUrl: undefined,
       controlPlaneUrl: undefined,
       healthPort: 3001,
+      solverApiUrl: "https://api.2captcha.com",
+      turnstileSitekey: undefined,
     });
+  });
+
+  it("aceita SOLVER_API_URL e TURNSTILE_SITEKEY opcionais", () => {
+    const config = loadConfig({
+      ...comSolver,
+      SOLVER_API_URL: "https://api.capsolver.com/",
+      TURNSTILE_SITEKEY: "0x4AAAAAAAexemplo",
+    });
+    expect(config.solverApiUrl).toBe("https://api.capsolver.com");
+    expect(config.turnstileSitekey).toBe("0x4AAAAAAAexemplo");
+  });
+
+  it.each(["ftp://solver", "nao-e-url"])("rejeita SOLVER_API_URL inválida %s", (url) => {
+    const erro = erroDe({ ...comSolver, SOLVER_API_URL: url });
+    expect(erro.message).toContain("SOLVER_API_URL");
   });
 
   it("aceita só solver com usuário e senha", () => {

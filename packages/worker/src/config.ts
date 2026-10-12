@@ -9,12 +9,16 @@ export interface WorkerConfig {
   proxyUrl: string | undefined;
   controlPlaneUrl: string | undefined;
   healthPort: number;
+  solverApiUrl: string;
+  turnstileSitekey: string | undefined;
 }
 
 export type WorkerEnv = Record<string, string | undefined>;
 
 const DEFAULT_HEALTH_PORT = 3001;
+const DEFAULT_SOLVER_API_URL = "https://api.2captcha.com";
 const PROXY_PROTOCOLS: Record<string, true> = { "http:": true, "https:": true, "socks5:": true };
+const SOLVER_PROTOCOLS: Record<string, true> = { "http:": true, "https:": true };
 
 export class ConfigError extends Error {
   readonly problems: readonly string[];
@@ -31,10 +35,10 @@ function read(env: WorkerEnv, name: string): string | undefined {
   return value ? value : undefined;
 }
 
-function validProxy(value: string): boolean {
+function validUrl(value: string, protocols: Record<string, true>): boolean {
   try {
     const url = new URL(value);
-    return PROXY_PROTOCOLS[url.protocol] === true && url.hostname !== "";
+    return protocols[url.protocol] === true && url.hostname !== "";
   } catch {
     return false;
   }
@@ -60,6 +64,8 @@ export function loadConfig(env: WorkerEnv): WorkerConfig {
   const proxyUrl = read(env, "PROXY_URL");
   const controlPlaneUrl = read(env, "CONTROL_PLANE_URL");
   const healthPortRaw = read(env, "HEALTH_PORT");
+  const solverApiUrl = read(env, "SOLVER_API_URL")?.replace(/\/+$/, "") ?? DEFAULT_SOLVER_API_URL;
+  const turnstileSitekey = read(env, "TURNSTILE_SITEKEY");
 
   if (!accountId) problems.push("ACCOUNT_ID ausente");
   if (!gameUrl) problems.push("GAME_URL ausente");
@@ -79,8 +85,12 @@ export function loadConfig(env: WorkerEnv): WorkerConfig {
     );
   }
 
-  if (proxyUrl && !validProxy(proxyUrl)) {
+  if (proxyUrl && !validUrl(proxyUrl, PROXY_PROTOCOLS)) {
     problems.push("PROXY_URL inválida (esperado URL http://, https:// ou socks5://)");
+  }
+
+  if (!validUrl(solverApiUrl, SOLVER_PROTOCOLS)) {
+    problems.push("SOLVER_API_URL inválida (esperado URL http:// ou https://)");
   }
 
   let healthPort = DEFAULT_HEALTH_PORT;
@@ -103,5 +113,7 @@ export function loadConfig(env: WorkerEnv): WorkerConfig {
     proxyUrl,
     controlPlaneUrl,
     healthPort,
+    solverApiUrl,
+    turnstileSitekey,
   };
 }

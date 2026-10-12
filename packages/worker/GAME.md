@@ -150,3 +150,14 @@ Frequências observadas no PokeGrid: coleta de inventário a cada 30 s, watchdog
 - **Detecção de headless/Playwright específica**: nenhuma fonte confirma checagens além de Cloudflare + UA; tratar como risco.
 - **Tela de criação de personagem** (`/create-character`) e verificação de e-mail: fluxo não explorado (requer conta real).
 - Lista completa de slugs de hunts: virá de `/api/game/map-markers` em runtime.
+
+## 9. Pontos de verificação manual (auth do worker)
+
+O que a Task 19 implementou sem conta real e precisa ser confirmado em smoke manual:
+
+- **Sitekey do Turnstile**: `0x4AAAAAADkKBnFEMDt0MGBM`, literal no chunk `/_next/static/chunks/3aqjofv7-1o3x.js` (não há `data-sitekey` no HTML de `/login`; o widget é renderizado via `turnstile.render({sitekey})`). Extraída em 2026-10-11 por GET direto, sem challenge da Cloudflare. Se o chunk mudar e a extração falhar, usar `TURNSTILE_SITEKEY`.
+- **Solver aceito pelo jogo?** O token vem de `TurnstileTaskProxyless` (IP do solver, não o do proxy da conta). Confirmar que `POST /api/auth/login` aceita esse `captchaToken` (o backend pode validar `remoteip` no siteverify).
+- **Turnstile sempre ligado?** `TURNSTILE_ENABLED` no bundle é `!!sitekey`, ou seja, ligado enquanto a sitekey estiver embutida. Confirmar se o backend exige `captchaToken` em todo login.
+- **Refresh rotaciona o refreshToken?** O cliente salva a resposta inteira de `/api/auth/refresh` como `pokeweb:tokens` e só refaz refresh se houver `refreshToken` salvo, o que indica que a resposta traz os dois tokens [INFERENCE]. O worker trata os dois casos (mantém o atual quando não vem novo); confirmar com conta real.
+- **Validade do access token**: o agendamento usa o `exp` do JWT com 60 s de margem (piso de 30 s entre refreshes); confirmar que o access é JWT com `exp`. Se não for, não há renovação proativa: o game client chama `AuthManager.invalidar()` quando o jogo recusar o token.
+- **Contas com 2FA** não são suportadas pelo login automático (`twoFactor` na resposta → needs-login).
