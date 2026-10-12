@@ -10,6 +10,7 @@ const port = Number(process.env.PORT ?? 4000);
 const { app, sessionStore, supervisor, updateManager } = buildApp();
 
 await sessionStore.init();
+void sessionStore.atualizarPerfil();
 supervisor.start();
 updateManager.start();
 

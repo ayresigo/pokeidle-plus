@@ -42,9 +42,15 @@ export function registerSessionRoutes(app: FastifyInstance, sessionStore: Sessio
 
   app.get("/auth/session", async () => {
     const resultado = await sessionStore.getAccessToken();
+    if (resultado.token !== null && sessionStore.perfil === null) {
+      await sessionStore.atualizarPerfil();
+    }
+    const authenticated = resultado.token !== null || resultado.offline;
+    const perfil = authenticated ? sessionStore.perfil : null;
     return {
-      authenticated: resultado.token !== null || resultado.offline,
+      authenticated,
       offline: resultado.offline,
+      ...(perfil !== null && { username: perfil.username, role: perfil.role }),
     };
   });
 }

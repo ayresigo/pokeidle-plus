@@ -10,6 +10,7 @@ import { registerStreamRoutes } from "./stream/routes.js";
 import { Supervisor } from "./supervisor/supervisor.js";
 import { UpdateManager } from "./update/manager.js";
 import { registerUpdateRoutes } from "./update/routes.js";
+import { registerUsersRoutes } from "./users/routes.js";
 import { registerWorkerRoutes } from "./workers/routes.js";
 
 export interface BuildAppOpts {
@@ -76,6 +77,7 @@ export function buildApp(opts?: BuildAppOpts) {
   registerUpdateRoutes(app, { updateManager });
   registerSessionRoutes(app, sessionStore);
   registerAccountsRoutes(app, { sessionStore, centralApiUrl });
+  registerUsersRoutes(app, { sessionStore, centralApiUrl });
   registerProxyRoutes(app, orchestrator);
 
   app.addHook("onClose", async () => {

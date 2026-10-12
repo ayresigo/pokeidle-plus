@@ -222,4 +222,95 @@ describe("SessionStore", () => {
     expect(await store.getAccessToken()).toEqual({ token: null, offline: false });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  describe("perfil", () => {
+    function centralComTokensEPerfil(statusMe = 200) {
+      return vi.fn().mockImplementation(async (url: string) => {
+        if (url === `${CENTRAL}/auth/me`) return respostaJson(statusMe, { id: "u1", username: "ash", role: "admin" });
+        return respostaJson(200, { accessToken: fabricarJwt(EM_BREVE), refreshToken: "refresh-novo" });
+      });
+    }
+
+    it("login busca /auth/me e persiste o perfil junto ao session.json", async () => {
+      const fetchMock = centralComTokensEPerfil();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const store = new SessionStore(dir, CENTRAL);
+      await store.login("ash", "senha");
+
+      expect(store.perfil).toEqual({ username: "ash", role: "admin" });
+      const chamadaMe = fetchMock.mock.calls.find(([u]) => u === `${CENTRAL}/auth/me`) as [string, RequestInit];
+      expect((chamadaMe[1].headers as Record<string, string>).authorization).toMatch(/^Bearer /);
+      const salvo = JSON.parse(await readFile(path.join(dir, "session.json"), "utf8"));
+      expect(salvo.perfil).toEqual({ username: "ash", role: "admin" });
+    });
+
+    it("login segue válido sem perfil quando /auth/me falha", async () => {
+      vi.stubGlobal("fetch", centralComTokensEPerfil(500));
+
+      const store = new SessionStore(dir, CENTRAL);
+      await store.login("ash", "senha");
+
+      expect(store.perfil).toBeNull();
+      expect((await store.getAccessToken()).token).toBeTruthy();
+      const salvo = JSON.parse(await readFile(path.join(dir, "session.json"), "utf8"));
+      expect(salvo.perfil).toBeUndefined();
+    });
+
+    it("init restaura o perfil persistido e o mantém em grace", async () => {
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        path.join(dir, "session.json"),
+        JSON.stringify({
+          refreshToken: "refresh-abc",
+          obtainedAt: new Date(AGORA).toISOString(),
+          perfil: { username: "ash", role: "user" },
+        }),
+      );
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("fetch failed")));
+
+      const store = new SessionStore(dir, CENTRAL);
+      await store.init();
+      await store.atualizarPerfil();
+
+      expect(await store.getAccessToken()).toEqual({ token: null, offline: true });
+      expect(store.perfil).toEqual({ username: "ash", role: "user" });
+    });
+
+    it("perfil persistido inválido é ignorado", async () => {
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        path.join(dir, "session.json"),
+        JSON.stringify({ refreshToken: "r", obtainedAt: new Date(AGORA).toISOString(), perfil: { username: 1 } }),
+      );
+
+      const store = new SessionStore(dir, CENTRAL);
+      await store.init();
+
+      expect(store.perfil).toBeNull();
+    });
+
+    it("atualizarPerfil no boot renova o access e grava o perfil atual", async () => {
+      await semearSessao(new Date(AGORA));
+      vi.stubGlobal("fetch", centralComTokensEPerfil());
+
+      const store = new SessionStore(dir, CENTRAL);
+      await store.init();
+      await store.atualizarPerfil();
+
+      expect(store.perfil).toEqual({ username: "ash", role: "admin" });
+      const salvo = JSON.parse(await readFile(path.join(dir, "session.json"), "utf8"));
+      expect(salvo).toMatchObject({ refreshToken: "refresh-novo", perfil: { username: "ash", role: "admin" } });
+    });
+
+    it("logout limpa o perfil", async () => {
+      vi.stubGlobal("fetch", centralComTokensEPerfil());
+      const store = new SessionStore(dir, CENTRAL);
+      await store.login("ash", "senha");
+
+      await store.logout();
+
+      expect(store.perfil).toBeNull();
+    });
+  });
 });

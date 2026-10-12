@@ -5,9 +5,15 @@ export type ResultadoToken =
   | { token: string; offline: false }
   | { token: null; offline: boolean };
 
+export interface Perfil {
+  username: string;
+  role: string;
+}
+
 interface SessaoPersistida {
   refreshToken: string;
   obtainedAt: string;
+  perfil?: Perfil;
 }
 
 const GRACE_MS = 7 * 24 * 3600 * 1000;
@@ -16,6 +22,13 @@ const MARGEM_EXPIRACAO_MS = 30 * 1000;
 export class ErroCredenciaisInvalidas extends Error {}
 
 export class ErroCentralInalcancavel extends Error {}
+
+function lerPerfil(valor: unknown): Perfil | null {
+  if (valor === null || typeof valor !== "object") return null;
+  const { username, role } = valor as Record<string, unknown>;
+  if (typeof username !== "string" || typeof role !== "string") return null;
+  return { username, role };
+}
 
 function decodificarExp(jwt: string): number {
   const payload = jwt.split(".")[1];
@@ -28,6 +41,7 @@ export class SessionStore {
   private accessExpiraEm = 0;
   private refreshToken: string | null = null;
   private obtainedAt: number | null = null;
+  private perfilAtual: Perfil | null = null;
 
   constructor(
     private readonly dataDir: string,
@@ -36,6 +50,10 @@ export class SessionStore {
 
   private get caminhoSessao(): string {
     return path.join(this.dataDir, "session.json");
+  }
+
+  get perfil(): Perfil | null {
+    return this.perfilAtual;
   }
 
   async init(): Promise<void> {
@@ -55,6 +73,7 @@ export class SessionStore {
     }
     this.refreshToken = sessao.refreshToken;
     this.obtainedAt = new Date(sessao.obtainedAt).getTime();
+    this.perfilAtual = lerPerfil(sessao.perfil);
   }
 
   async login(username: string, password: string): Promise<void> {
@@ -81,7 +100,29 @@ export class SessionStore {
     this.definirAccess(tokens.accessToken);
     this.refreshToken = tokens.refreshToken;
     this.obtainedAt = Date.now();
+    this.perfilAtual = await this.buscarPerfil(tokens.accessToken);
     await this.persistir();
+  }
+
+  async atualizarPerfil(): Promise<void> {
+    const resultado = await this.getAccessToken();
+    if (resultado.token === null) return;
+    const perfil = await this.buscarPerfil(resultado.token);
+    if (perfil === null || this.accessToken === null) return;
+    this.perfilAtual = perfil;
+    if (this.refreshToken !== null) await this.persistir();
+  }
+
+  private async buscarPerfil(accessToken: string): Promise<Perfil | null> {
+    try {
+      const resposta = await fetch(`${this.centralApiUrl}/auth/me`, {
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+      if (!resposta.ok) return null;
+      return lerPerfil(await resposta.json());
+    } catch {
+      return null;
+    }
   }
 
   definirAccess(accessToken: string): void {
@@ -160,6 +201,7 @@ export class SessionStore {
     this.accessExpiraEm = 0;
     this.refreshToken = null;
     this.obtainedAt = null;
+    this.perfilAtual = null;
     await rm(this.caminhoSessao, { force: true });
   }
 
@@ -168,6 +210,7 @@ export class SessionStore {
     const sessao: SessaoPersistida = {
       refreshToken: this.refreshToken as string,
       obtainedAt: new Date(this.obtainedAt as number).toISOString(),
+      ...(this.perfilAtual !== null && { perfil: this.perfilAtual }),
     };
     await writeFile(this.caminhoSessao, JSON.stringify(sessao, null, 2));
   }

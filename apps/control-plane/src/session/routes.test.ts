@@ -150,11 +150,52 @@ describe("rotas de sessão", () => {
   });
 
   describe("GET /auth/session", () => {
-    it("autenticado e online com token válido", async () => {
+    function centralComPerfil(perfil: unknown = { id: "u1", username: "ash", role: "admin" }) {
+      return vi.fn().mockImplementation(async (url: string) =>
+        url === "http://central.test/auth/me" ? respostaJson(200, perfil) : respostaJson(500, {}),
+      );
+    }
+
+    it("autenticado e online inclui username e role buscados no central", async () => {
       sessionStore.definirAccess(fabricarJwt(EM_BREVE));
+      const fetchMock = centralComPerfil();
+      vi.stubGlobal("fetch", fetchMock);
       const resposta = await app.inject({ method: "GET", url: "/auth/session" });
       expect(resposta.statusCode).toBe(200);
+      expect(resposta.json()).toEqual({ authenticated: true, offline: false, username: "ash", role: "admin" });
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect((init.headers as Record<string, string>).authorization).toMatch(/^Bearer /);
+    });
+
+    it("usa o perfil em cache sem consultar o central de novo", async () => {
+      sessionStore.definirAccess(fabricarJwt(EM_BREVE));
+      const fetchMock = centralComPerfil();
+      vi.stubGlobal("fetch", fetchMock);
+      await app.inject({ method: "GET", url: "/auth/session" });
+      const resposta = await app.inject({ method: "GET", url: "/auth/session" });
+      expect(resposta.json()).toMatchObject({ username: "ash", role: "admin" });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("autenticado sem perfil quando /auth/me falha", async () => {
+      sessionStore.definirAccess(fabricarJwt(EM_BREVE));
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(respostaJson(500, {})));
+      const resposta = await app.inject({ method: "GET", url: "/auth/session" });
       expect(resposta.json()).toEqual({ authenticated: true, offline: false });
+    });
+
+    it("login busca o perfil e a sessão o expõe", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation(async (url: string) =>
+          url === "http://central.test/auth/me"
+            ? respostaJson(200, { id: "u2", username: "misty", role: "user" })
+            : respostaJson(200, { accessToken: fabricarJwt(EM_BREVE), refreshToken: "r" }),
+        ),
+      );
+      await app.inject({ method: "POST", url: "/auth/login", payload: { username: "misty", password: "senha" } });
+      const resposta = await app.inject({ method: "GET", url: "/auth/session" });
+      expect(resposta.json()).toEqual({ authenticated: true, offline: false, username: "misty", role: "user" });
     });
 
     it("autenticado e offline em grace com central inalcançável", async () => {
@@ -163,6 +204,31 @@ describe("rotas de sessão", () => {
       const resposta = await app.inject({ method: "GET", url: "/auth/session" });
       expect(resposta.statusCode).toBe(200);
       expect(resposta.json()).toEqual({ authenticated: true, offline: true });
+    });
+
+    it("offline em grace usa o último perfil persistido", async () => {
+      await writeFile(
+        path.join(dir, "session.json"),
+        JSON.stringify({
+          refreshToken: "refresh-abc",
+          obtainedAt: new Date().toISOString(),
+          perfil: { username: "brock", role: "admin" },
+        }),
+      );
+      await sessionStore.init();
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("fetch failed")));
+      const resposta = await app.inject({ method: "GET", url: "/auth/session" });
+      expect(resposta.json()).toEqual({ authenticated: true, offline: true, username: "brock", role: "admin" });
+    });
+
+    it("logout limpa o perfil", async () => {
+      sessionStore.definirAccess(fabricarJwt(EM_BREVE));
+      vi.stubGlobal("fetch", centralComPerfil());
+      await app.inject({ method: "GET", url: "/auth/session" });
+      await app.inject({ method: "POST", url: "/auth/logout" });
+      expect(sessionStore.perfil).toBeNull();
+      const resposta = await app.inject({ method: "GET", url: "/auth/session" });
+      expect(resposta.json()).toEqual({ authenticated: false, offline: false });
     });
 
     it("não autenticado sem sessão", async () => {
