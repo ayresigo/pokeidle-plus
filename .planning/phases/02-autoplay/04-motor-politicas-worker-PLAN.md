@@ -46,13 +46,19 @@ must_haves:
 ---
 
 <gate>
-⚠ NÃO EXECUTAR antes do merge da Fase 1. Este plano edita `packages/worker/src/game/`
-(`loop.ts`, `client.ts`), que a Fase 1 também altera. Pré-condição de execução:
-(1) a Fase 1 foi mergeada na base deste worktree; (2) rebase feito; (3) `pnpm
---filter worker test` verde na base rebaseada. Só então iniciar as tasks.
-Preferir SEMPRE adicionar módulos novos (`compras.ts`, `vendas.ts`, `metricas.ts`)
-e tocar o mínimo em `loop.ts`/`client.ts` (apenas registrar as novas ações e os
-métodos REST), sem reescrever a lógica validada pela Fase 1.
+⚠ NÃO EXECUTAR antes do merge do CÓDIGO da Fase 1. O gate aqui é SÓ o conflito de
+arquivo: este plano edita `packages/worker/src/game/` (`loop.ts`, `client.ts`),
+que a Fase 1 corrige (VAL-07). NÃO depende dos ACHADOS do 6-PLAN da Fase 1 —
+usa só endpoints já confirmados (`balls/buy`, `shop/sell`, `flint/sell`). As
+features que dependem de achados (potions, cura, hunt otimizada, venda de pokémon,
+campos extras do dashboard) ficam num plano COMPLEMENTAR futuro (ver RESEARCH
+<blocked> + `phase-1-.../6-PLAN.md`), não aqui.
+Pré-condição de execução: (1) o código da Fase 1 (correções em `game/`) foi
+mergeado na base deste worktree; (2) rebase feito; (3) `pnpm --filter worker test`
+verde na base rebaseada. Só então iniciar as tasks. Preferir SEMPRE adicionar
+módulos novos (`compras.ts`, `vendas.ts`, `metricas.ts`) e tocar o mínimo em
+`loop.ts`/`client.ts` (apenas registrar as novas ações e os métodos REST), sem
+reescrever a lógica validada pela Fase 1.
 </gate>
 
 <objective>

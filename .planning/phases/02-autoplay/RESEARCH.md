@@ -148,18 +148,32 @@ Rastreando `02-CONTEXT.md` (D-01..D-26). Entram agora:
 </decisions>
 
 <blocked>
-Fora deste plano, dependente da Fase 1 (NÃO planejar/executar agora):
-- **Hunt "mais otimizada"** (D-01): precisa de dados reais (`creatures.json`,
-  kills por hunt) para definir o cálculo.
-- **Poções/cura** (D-07, D-14): endpoint/mecanismo de compra de potion e de cura
-  (`joy-heal`/`use-heal`) não confirmados (GAME.md §8).
-- **Venda de pokémon duplicados/fracos** (D-11): endpoint/critério não mapeados.
-- **sleep-mode no drain** (D-13): condicional à VAL-05.
-- **Campos do dashboard sem fonte** (D-20): XP/h, XP treinador×pokémon, % bônus
-  (VIP/Guild/Twitch), diamantes, gemas, dias VIP/Passe, nível do treinador, drops
-  raros, nível exato do pokémon ativo — provável `GET /api/characters/me`, campos
-  não mapeados.
-- **Run de aceite de 24 h (AUTO-06)** e qualquer execução do autoplay contra o
-  jogo real: dependem da Fase 1.
-- **Registro de conta do zero (ACC-01)**: backlog, fase própria.
+Fora deste plano, dependente da Fase 1 (NÃO planejar/executar agora). Cada item
+abaixo aponta QUAL achado da Fase 1 o desbloqueia. A Fase 1 já reservou o
+`.planning/phases/phase-1-validacao-com-conta-real/6-PLAN.md` ("serve_phase_2")
+para mapear, na sessão real, exatamente estes pontos → saída em
+`packages/worker/GAME.md` §4.3/§8, `…/EVIDENCE.md` e `…/6-SUMMARY.md`.
+
+| Item bloqueado (02-CONTEXT) | Desbloqueado por (Fase 1) |
+|---|---|
+| **Hunt "mais otimizada"** (D-01) | 6-PLAN Task 4 — `creatures.json` (`level`/loot) read-only → GAME.md §4.3 |
+| **Whitelist de venda** calibrada (D-08) | 6-PLAN Task 4 — `items.json` (`npcPrice`) → GAME.md §4.3 |
+| **Compra de poções** (D-07) | 6-PLAN Task 3 — body de potion-buy mapeado (bundle/DevTools) → GAME.md §4.3/§8 |
+| **Cura pós field-teleport-city** (D-14) | 6-PLAN Task 3 — mecanismo `joy-heal`/`use-heal` → GAME.md §8 |
+| **Venda de pokémon duplicados/fracos** (D-11) | 6-PLAN Task 3 — endpoint de poke-sell; Task 2 — `pokes`/`poke-delta` p/ critério → GAME.md §8/§4.4 |
+| **Campos do dashboard sem fonte** (D-20) | 6-PLAN Task 1 — `GET /api/characters/me` (nível treinador, gold, diamantes, gemas, VIP, % bônus) → GAME.md §4.3 |
+| **Formato de analyzer/balls/pokes/poke-xp** p/ cards e RESET (D-19/D-23) | 6-PLAN Task 2 — frames WS crus → GAME.md §4.3/§4.4 |
+| **sleep-mode no drain** (D-13) | VAL-05 (2/3/5-PLAN da Fase 1) — se o farm offline não continua sem sleep-mode |
+| **Run de aceite 24 h (AUTO-06)** e execução contra o jogo real | Fase 1 inteira (aceite do solver, 4007, shard, kills reais) |
+| **Registro de conta do zero (ACC-01)** | Backlog, fase própria (após veredito do solver na VAL-01) |
+
+Distinção importante para a execução:
+- **Plan 04 (compra de balls + venda de itens)** NÃO depende dos achados acima —
+  usa só endpoints já confirmados (`balls/buy`, `shop/sell`, `flint/sell`). Seu
+  gate é apenas o **merge do CÓDIGO da Fase 1** em `packages/worker/src/game/`
+  (correções VAL-07 em `loop.ts`/`client.ts`), para rebase sem conflito.
+- Os itens da tabela acima são **features futuras** (potions, cura, hunt
+  otimizada, poke-sell, campos extras do dashboard): entram num plano
+  complementar da Fase 2 DEPOIS que o 6-PLAN publicar os achados — não estão
+  nos Plans 01-04.
 </blocked>
