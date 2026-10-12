@@ -17,5 +17,7 @@ ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /app ./
 WORKDIR /app/apps/central-api
+ARG VERSION=dev
+ENV APP_VERSION=$VERSION
 EXPOSE 8080
 CMD ["sh", "-c", "pnpm exec prisma migrate deploy && pnpm db:seed && node dist/server.js"]

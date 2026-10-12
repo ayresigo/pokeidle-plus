@@ -180,7 +180,7 @@ describe("rotas de workers", () => {
       expect(orchestrator.criados).toHaveLength(1);
       const cfg = orchestrator.criados[0];
       expect(cfg.accountId).toBe("conta-1");
-      expect(cfg.imageRef).toBe("ghcr.io/multiacc-pokeidle/mpw-worker:stable");
+      expect(cfg.imageRef).toBe("ghcr.io/ayresigo/mpw-worker:stable");
       expect(cfg.env).toEqual({
         ACCOUNT_ID: "conta-1",
         GAME_URL: "https://jogo.test",

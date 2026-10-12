@@ -44,7 +44,7 @@ export interface UpdateManagerOpts {
   supervisor: ControleSupervisor;
   workerImage: string;
   currentVersion: string;
-  updaterImage?: string;
+  updaterImage: string;
   autoUpdateEnv?: boolean;
   checkIntervalMs?: number;
   healthTimeoutMs?: number;
@@ -62,7 +62,6 @@ interface AlvoRecreate {
   inspecao: WorkerInspect;
 }
 
-const REPO_UPDATER_PADRAO = "ghcr.io/multiacc-pokeidle/mpw-updater";
 const INTERVALO_PADRAO_MS = 6 * 3600 * 1000;
 const HEALTH_TIMEOUT_PADRAO_MS = 60_000;
 const HEALTH_POLL_PADRAO_MS = 2_000;
@@ -88,7 +87,7 @@ export class UpdateManager {
 
   constructor(private readonly opts: UpdateManagerOpts) {
     this.repoWorker = repositorioDaImagem(opts.workerImage);
-    this.repoUpdater = opts.updaterImage ?? REPO_UPDATER_PADRAO;
+    this.repoUpdater = opts.updaterImage;
     this.caminhoSettings = path.join(opts.dataDir, "settings.json");
     this.caminhoRollback = path.join(opts.dataDir, "rollback.json");
   }

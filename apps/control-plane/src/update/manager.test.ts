@@ -211,6 +211,7 @@ function criarManager(
     supervisor: criarSupervisorFake(orchestrator.eventos),
     workerImage: `${REPO_WORKER}:1.0.0`,
     currentVersion: "1.0.0",
+    updaterImage: REPO_UPDATER,
     healthPollMs: 5,
     ...parciais,
   });
@@ -641,6 +642,7 @@ describe("UpdateManager", () => {
       supervisor: criarSupervisorFake(orchestrator.eventos),
       workerImage: `${REPO_WORKER}:1.0.0`,
       currentVersion: "1.0.0",
+      updaterImage: REPO_UPDATER,
       autoUpdateEnv: true,
     });
 
@@ -827,6 +829,7 @@ describe("rotas /update", () => {
     dir = await mkdtemp(path.join(tmpdir(), "update-routes-test-"));
     orchestrator = criarOrchestratorFake(dir);
     const built = buildApp({
+      imageRegistry: "ghcr.io/multiacc-pokeidle",
       dataDir: dir,
       centralApiUrl: "http://central.test",
       orchestrator,
