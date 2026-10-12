@@ -12,6 +12,8 @@ Roda várias contas do PokeIdle no seu PC, cada uma num container próprio, cont
 - Usuário e senha da central, fornecidos pelo admin.
 - O endereço da central (`CENTRAL_API_URL`), também passado pelo admin.
 
+As imagens ficam no GitHub Container Registry (`ghcr.io`) e são públicas: não precisa de `docker login`.
+
 ### Instalar e subir
 
 1. Baixe este repositório (ou só os arquivos `docker-compose.yml` e `.env.example`) para uma pasta.
@@ -19,12 +21,13 @@ Roda várias contas do PokeIdle no seu PC, cada uma num container próprio, cont
 3. Na pasta, rode:
 
    ```sh
+   docker compose pull
    docker compose up -d
    ```
 
 4. Abra http://localhost:3000 e entre com o usuário fornecido pelo admin.
 
-O painel só escuta em `127.0.0.1`: ninguém da sua rede consegue acessá-lo, e não exponha essa porta para fora.
+O painel só escuta em `127.0.0.1`: ninguém da sua rede consegue acessá-lo, e não exponha essa porta para fora. Ele também só responde quando aberto como `localhost`, `127.0.0.1` ou `[::1]`; se você usa outro nome que aponta para o próprio PC, coloque-o em `ALLOWED_HOSTS` no `.env`.
 
 ### Cadastrar contas
 
@@ -41,17 +44,34 @@ Se a conta aparecer como **precisa de login**, cole os tokens do jogo:
 ### Atualizar
 
 - Em **Configurações** dá para ver a versão atual, clicar em **atualizar agora** e ligar/desligar a **Atualização automática**.
+- Se uma atualização falhar, o erro aparece em **Configurações**. A atualização automática não tenta de novo a mesma versão; **atualizar agora** tenta.
 - Manualmente: `docker compose pull && docker compose up -d`.
 
-### Voltar de versão (rollback)
+### Fixar ou voltar de versão (rollback)
 
 - **Configurações → voltar para vX** devolve os workers para a versão anterior.
-- Para voltar o painel inteiro, coloque a versão desejada em `MPW_TAG` no `.env` (ex.: `MPW_TAG=1.2.0`) e rode `docker compose up -d`. Volte para `MPW_TAG=stable` depois.
+- Para fixar ou voltar o painel inteiro:
+  1. Em **Configurações**, desligue a **Atualização automática**. Se ficar ligada, o painel volta sozinho para a versão mais nova.
+  2. Coloque a versão desejada em `MPW_TAG` no `.env` (ex.: `MPW_TAG=1.2.0`).
+  3. Rode `docker compose pull && docker compose up -d`.
+- Para voltar a acompanhar as releases, coloque `MPW_TAG=stable`, rode `docker compose pull && docker compose up -d` e religue a **Atualização automática**.
+- Depois de mudar o `.env`, use sempre `docker compose pull && docker compose up -d`. Só `docker compose up -d` pode recriar o painel a partir de uma imagem local antiga.
 
 ### Parar
 
 - `docker compose stop` para tudo e mantém seus dados.
-- Antes de um `docker compose down`, pare os workers pelo painel; se algum ficar para trás, remova com `docker rm -f $(docker ps -aq --filter label=mpw.managed=true)`.
+- Antes de um `docker compose down`, clique em **Parar** em cada conta no painel. Os containers das contas não fazem parte do compose; para removê-los de vez:
+
+  ```sh
+  # bash (Linux, macOS, WSL, Git Bash)
+  docker ps -aq --filter label=mpw.managed=true | xargs -r docker rm -f
+  ```
+
+  ```powershell
+  # PowerShell
+  docker ps -aq --filter label=mpw.managed=true | ForEach-Object { docker rm -f $_ }
+  ```
+
 - Seus dados ficam no volume `mpw_mpw-data`. Não use `docker compose down -v`, a menos que queira perder a sessão salva.
 
 ## Para o admin: central na VPS
@@ -61,16 +81,25 @@ A central (`mpw-central-api` + Postgres) guarda usuários, contas e releases. Us
 ```sh
 cat > .env <<'EOF'
 POSTGRES_PASSWORD=uma-senha-forte
-JWT_SECRET=um-segredo-longo-e-aleatorio
-SECRETS_KEY=resultado-de-openssl-rand-hex-32
+JWT_SECRET=resultado-de-openssl-rand-hex-32
+SECRETS_KEY=outro-resultado-de-openssl-rand-hex-32
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=outra-senha-forte
 EOF
 docker compose -f docker-compose.central.yml up -d
 ```
 
+- `JWT_SECRET` e `SECRETS_KEY` saem de `openssl rand -hex 32` (rode uma vez para cada; os dois precisam ser diferentes). A API não sobe com `JWT_SECRET` menor que 32 caracteres.
 - A cada start a imagem aplica as migrações e garante que o usuário admin exista.
-- A API escuta na porta 8080 (`CENTRAL_PORT` muda a porta publicada). Coloque um proxy reverso com HTTPS na frente e passe essa URL aos amigos como `CENTRAL_API_URL`.
+- A API escuta só em `127.0.0.1:8080` na VPS (`CENTRAL_PORT` muda a porta), em HTTP. Quem expõe para a internet é um proxy reverso com HTTPS na mesma máquina, na porta 443. Exemplo mínimo de `Caddyfile` (o Caddy emite o certificado sozinho):
+
+  ```caddyfile
+  mpw.exemplo.com {
+      reverse_proxy 127.0.0.1:8080
+  }
+  ```
+
+  Com nginx, use um `server` com `listen 443 ssl` e `proxy_pass http://127.0.0.1:8080;`. Passe a URL HTTPS (ex.: `https://mpw.exemplo.com`) aos amigos como `CENTRAL_API_URL`.
 - Guarde o `SECRETS_KEY`: sem ele as credenciais salvas não podem ser lidas.
 - Ainda não existe tela/rota para criar usuários. Por enquanto, crie cada amigo com o seed e rebaixe o papel para `user`:
 
