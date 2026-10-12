@@ -1,21 +1,40 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useLayoutEffect, useState, type ReactNode } from "react";
+import { useRouter, useSelectedLayoutSegment } from "next/navigation";
+import { Suspense, useEffect, useLayoutEffect, useState, type ReactNode } from "react";
 import { getSession, logout, type Session } from "@/lib/api";
 import { SessaoContext } from "@/lib/sessao";
 
 const INTERVALO_SESSAO_MS = 15_000;
 
 const LINKS = [
-  { href: "/", rotulo: "Dashboard" },
-  { href: "/settings", rotulo: "Configurações" },
+  { href: "/", rotulo: "Dashboard", segmentos: [null, "accounts"] },
+  { href: "/settings", rotulo: "Configurações", segmentos: ["settings"] },
 ];
+
+function LinksNavegacao({ segmento }: { segmento?: string | null }) {
+  return LINKS.map((link) => (
+    <Link
+      key={link.href}
+      href={link.href}
+      className={
+        segmento !== undefined && link.segmentos.includes(segmento)
+          ? "font-medium text-slate-900"
+          : "text-slate-500 hover:text-slate-900"
+      }
+    >
+      {link.rotulo}
+    </Link>
+  ));
+}
+
+function LinksNavegacaoAtivos() {
+  return <LinksNavegacao segmento={useSelectedLayoutSegment()} />;
+}
 
 export default function PainelLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const pathname = usePathname();
   const [sessao, setSessao] = useState<Session | null>(null);
   const [inalcancavel, setInalcancavel] = useState(false);
   const [saindo, setSaindo] = useState(false);
@@ -77,19 +96,9 @@ export default function PainelLayout({ children }: { children: ReactNode }) {
         <div className="mx-auto flex max-w-6xl items-center gap-6 px-6 py-3">
           <span className="font-semibold">Multiacc PokeIdle</span>
           <nav className="flex gap-4 text-sm">
-            {LINKS.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className={
-                  pathname === link.href
-                    ? "font-medium text-slate-900"
-                    : "text-slate-500 hover:text-slate-900"
-                }
-              >
-                {link.rotulo}
-              </Link>
-            ))}
+            <Suspense fallback={<LinksNavegacao />}>
+              <LinksNavegacaoAtivos />
+            </Suspense>
           </nav>
           <button
             type="button"
