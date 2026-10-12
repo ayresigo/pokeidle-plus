@@ -3,10 +3,13 @@ name: mpw
 services:
   web:
     image: ${IMAGE_REGISTRY:-ghcr.io/ayresigo}/mpw-web:${MPW_TAG:-stable}
+    pull_policy: always
+    init: true
     ports:
       - "127.0.0.1:3000:3000"
     environment:
       CONTROL_PLANE_URL: http://control-plane:4000
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
     depends_on:
       control-plane:
         condition: service_healthy
@@ -16,6 +19,8 @@ services:
 
   control-plane:
     image: ${IMAGE_REGISTRY:-ghcr.io/ayresigo}/mpw-control-plane:${MPW_TAG:-stable}
+    pull_policy: always
+    init: true
     environment:
       CENTRAL_API_URL: ${CENTRAL_API_URL:?defina CENTRAL_API_URL no .env}
       IMAGE_REGISTRY: ${IMAGE_REGISTRY:-ghcr.io/ayresigo}
