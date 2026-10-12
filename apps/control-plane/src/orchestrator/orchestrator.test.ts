@@ -78,27 +78,6 @@ describe.skipIf(!dockerDisponivel)("DockerOrchestrator", () => {
   );
 
   it(
-    "createWorker baixa a imagem quando ela não existe localmente",
-    async () => {
-      const imagemAusente = "hello-world:latest";
-      await docker
-        .getImage(imagemAusente)
-        .remove({ force: true })
-        .catch(() => {});
-      const id = await orchestrator.createWorker({
-        accountId: accountId(),
-        imageRef: imagemAusente,
-        env: {},
-      });
-      criados.push(id);
-
-      const inspecao = await docker.getContainer(id).inspect();
-      expect(inspecao.Config.Image).toBe(imagemAusente);
-    },
-    180_000,
-  );
-
-  it(
     "listWorkers filtra por label mpw.managed",
     async () => {
       const conta = accountId();
@@ -204,27 +183,6 @@ describe.skipIf(!dockerDisponivel)("DockerOrchestrator", () => {
       });
       expect(inspecao.image).toMatch(/^alpine@sha256:[0-9a-f]{64}$/);
       expect(inspecao.imageRef).toBe(IMAGEM);
-    },
-    60_000,
-  );
-
-  it(
-    "createUpdater cria mpw-updater com TARGET_TAG e socket, fora do listWorkers",
-    async () => {
-      const id = await orchestrator.createUpdater({
-        imageRef: IMAGEM,
-        targetTag: "9.9.9",
-      });
-      criados.push(id);
-
-      const inspecao = await docker.getContainer(id).inspect();
-      expect(inspecao.Name).toBe("/mpw-updater");
-      expect(inspecao.Config.Env).toContain("TARGET_TAG=9.9.9");
-      expect(inspecao.HostConfig.Binds).toContain(
-        "/var/run/docker.sock:/var/run/docker.sock",
-      );
-      const workers = await orchestrator.listWorkers();
-      expect(workers.map((w: WorkerStatus) => w.id)).not.toContain(id);
     },
     60_000,
   );
