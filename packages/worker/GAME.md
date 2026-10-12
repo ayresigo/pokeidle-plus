@@ -178,6 +178,10 @@ O que a Task 19 implementou sem conta real e precisa ser confirmado em smoke man
 - **Validade do access token**: o agendamento usa o `exp` do JWT com 60 s de margem (piso de 30 s entre refreshes); confirmar que o access é JWT com `exp`. Se não for, não há renovação proativa: o game client chama `AuthManager.invalidar()` quando o jogo recusar o token.
 - **Contas com 2FA** não são suportadas pelo login automático (`twoFactor` na resposta → needs-login).
 
+**Resultado do smoke (2026-10-12, conta descartável, IP local):**
+- **Solver aceito pelo jogo? → REFUTADO.** Em 3 tentativas, `POST /api/auth/login` com `captchaToken` resolvido no 2captcha devolveu `HTTP 401` ("Email ou senha incorretos"), com credenciais comprovadamente válidas no navegador. O diferencial é a origem do token (IP do solver ≠ IP do worker), consistente com validação de `remoteip` no siteverify. O worker cai em `needs-login` com `lastError` claro, sem loop (comportamento correto). Por isso, **tokens colados (`pokeweb:tokens`) são o caminho de login principal** (D-02). Evidência: `.planning/phases/phase-1-validacao-com-conta-real/EVIDENCE.md` (VAL-01).
+- **Turnstile sempre ligado / backend exige captcha? → NÃO-OBSERVÁVEL pelo worker** (ele sempre envia `captchaToken`); indício indireto de que o captcha é exigido (o do solver não passou).
+
 ### 9.2 Game loop (Task 20)
 
 Implementado a partir do bundle de `/play` (seção 4.4), sem conta real:
