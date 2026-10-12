@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSelectedLayoutSegment } from "next/navigation";
 import { Suspense, useEffect, useLayoutEffect, useState, type ReactNode } from "react";
+import { UpdateBadge } from "@/components/UpdateBadge";
 import { getSession, logout, type Session } from "@/lib/api";
 import { SessaoContext } from "@/lib/sessao";
 
@@ -100,14 +101,17 @@ export default function PainelLayout({ children }: { children: ReactNode }) {
               <LinksNavegacaoAtivos />
             </Suspense>
           </nav>
-          <button
-            type="button"
-            onClick={sair}
-            disabled={saindo}
-            className="ml-auto rounded border border-slate-300 px-3 py-1 text-sm hover:bg-slate-100 disabled:opacity-50"
-          >
-            Sair
-          </button>
+          <div className="ml-auto flex items-center gap-3">
+            <UpdateBadge />
+            <button
+              type="button"
+              onClick={sair}
+              disabled={saindo}
+              className="rounded border border-slate-300 px-3 py-1 text-sm hover:bg-slate-100 disabled:opacity-50"
+            >
+              Sair
+            </button>
+          </div>
         </div>
       </header>
       {sessao.offline && (

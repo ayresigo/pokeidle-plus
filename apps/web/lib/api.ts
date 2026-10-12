@@ -59,11 +59,15 @@ export type UpdateState = "idle" | "checking" | "updating" | "update_failed" | "
 export interface UpdateStatus {
   currentVersion: string;
   latestVersion: string | null;
+  latestChangelog: string | null;
+  latestImageDigest: string | null;
   updateAvailable: boolean;
   autoUpdate: boolean;
   lastCheck: string | null;
   lastError: string | null;
   state: UpdateState;
+  rollbackDisponivel: boolean;
+  rollbackVersao: string | null;
 }
 
 export interface LogLine {
