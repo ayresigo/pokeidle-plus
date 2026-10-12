@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useLayoutEffect, useState, type ReactNode } from "react";
 import { getSession, logout, type Session } from "@/lib/api";
+import { SessaoContext } from "@/lib/sessao";
 
 const INTERVALO_SESSAO_MS = 15_000;
 
@@ -110,7 +111,9 @@ export default function PainelLayout({ children }: { children: ReactNode }) {
           control-plane inalcançável
         </div>
       )}
-      <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-6">{children}</main>
+      <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-6">
+        <SessaoContext value={sessao}>{children}</SessaoContext>
+      </main>
     </div>
   );
 }

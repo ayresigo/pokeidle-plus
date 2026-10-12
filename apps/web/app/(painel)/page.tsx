@@ -1,5 +1,7 @@
+import { Dashboard } from "@/components/Dashboard";
+
 export const instant = false;
 
 export default function ContasPage() {
-  return <h1 className="text-xl font-semibold">Contas</h1>;
+  return <Dashboard />;
 }
