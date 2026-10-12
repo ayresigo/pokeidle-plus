@@ -360,6 +360,18 @@ Commit `feat(worker): game loop ws/rest com drain e dockerfile`.
 
 ---
 
+### Task 20b: Rotas de sessão, accounts e proxy-test no control-plane (lacuna do plano)
+
+A UI fala só com o control-plane, que não expõe auth nem accounts. Sessão é da instalação (um SessionStore por control-plane, uso local single-user).
+
+- `POST /auth/login` {username, password} → `SessionStore.login`; 401 genérico em credencial inválida; 503 se central inalcançável
+- `POST /auth/logout` → `SessionStore.logout` (204)
+- `GET /auth/session` → `{authenticated, offline}` (aberto, a UI decide redirect/banner)
+- `GET/POST /accounts`, `PATCH/DELETE /accounts/:id` → proxy ao central com Bearer (precisaCentral); nunca expõe `/credentials`; resposta/erro do central repassados sem segredos
+- `POST /proxy/test` {proxyUrl} → container efêmero curl pelo proxy, retorna IP de saída (timeout 20s; container sempre removido)
+
+Commit `feat(control-plane): rotas de sessão, accounts e teste de proxy`.
+
 ## Fase 4 — UI (`apps/web`)
 
 ### Task 21: Boot Next.js + cliente de API
