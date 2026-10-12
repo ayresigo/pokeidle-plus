@@ -10,12 +10,13 @@ import { SessaoContext } from "@/lib/sessao";
 const INTERVALO_SESSAO_MS = 15_000;
 
 const LINKS = [
-  { href: "/", rotulo: "Dashboard", segmentos: [null, "accounts"] },
-  { href: "/settings", rotulo: "Configurações", segmentos: ["settings"] },
+  { href: "/", rotulo: "Dashboard", segmentos: [null, "accounts"], soAdmin: false },
+  { href: "/settings", rotulo: "Configurações", segmentos: ["settings"], soAdmin: false },
+  { href: "/users", rotulo: "Usuários", segmentos: ["users"], soAdmin: true },
 ];
 
-function LinksNavegacao({ segmento }: { segmento?: string | null }) {
-  return LINKS.map((link) => (
+function LinksNavegacao({ admin, segmento }: { admin: boolean; segmento?: string | null }) {
+  return LINKS.filter((link) => admin || !link.soAdmin).map((link) => (
     <Link
       key={link.href}
       href={link.href}
@@ -30,8 +31,8 @@ function LinksNavegacao({ segmento }: { segmento?: string | null }) {
   ));
 }
 
-function LinksNavegacaoAtivos() {
-  return <LinksNavegacao segmento={useSelectedLayoutSegment()} />;
+function LinksNavegacaoAtivos({ admin }: { admin: boolean }) {
+  return <LinksNavegacao admin={admin} segmento={useSelectedLayoutSegment()} />;
 }
 
 export default function PainelLayout({ children }: { children: ReactNode }) {
@@ -91,18 +92,25 @@ export default function PainelLayout({ children }: { children: ReactNode }) {
     );
   }
 
+  const admin = sessao.role === "admin";
+
   return (
     <div className="flex min-h-full flex-1 flex-col">
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center gap-6 px-6 py-3">
           <span className="font-semibold">Multiacc PokeIdle</span>
           <nav className="flex gap-4 text-sm">
-            <Suspense fallback={<LinksNavegacao />}>
-              <LinksNavegacaoAtivos />
+            <Suspense fallback={<LinksNavegacao admin={admin} />}>
+              <LinksNavegacaoAtivos admin={admin} />
             </Suspense>
           </nav>
           <div className="ml-auto flex items-center gap-3">
             <UpdateBadge />
+            {sessao.username && (
+              <span className="text-sm text-slate-600" title={admin ? "administrador" : "usuário"}>
+                {sessao.username}
+              </span>
+            )}
             <button
               type="button"
               onClick={sair}

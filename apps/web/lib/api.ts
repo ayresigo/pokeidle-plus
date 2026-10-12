@@ -1,8 +1,32 @@
 export const API_BASE = "/cp";
 
+export type Papel = "admin" | "user";
+
 export interface Session {
   authenticated: boolean;
   offline: boolean;
+  username?: string;
+  role?: Papel;
+}
+
+export interface Usuario {
+  id: string;
+  username: string;
+  role: Papel;
+  active: boolean;
+  createdAt: string;
+}
+
+export interface NovoUsuario {
+  username: string;
+  password: string;
+  role: Papel;
+}
+
+export interface UsuarioPatch {
+  active?: boolean;
+  role?: Papel;
+  password?: string;
 }
 
 export interface Account {

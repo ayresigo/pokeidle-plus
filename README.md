@@ -101,12 +101,18 @@ docker compose -f docker-compose.central.yml up -d
 
   Com nginx, use um `server` com `listen 443 ssl` e `proxy_pass http://127.0.0.1:8080;`. Passe a URL HTTPS (ex.: `https://mpw.exemplo.com`) aos amigos como `CENTRAL_API_URL`.
 - Guarde o `SECRETS_KEY`: sem ele as credenciais salvas não podem ser lidas.
-- Ainda não existe tela/rota para criar usuários. Por enquanto, crie cada amigo com o seed e rebaixe o papel para `user`:
 
-  ```sh
-  docker compose -f docker-compose.central.yml exec -e ADMIN_USERNAME=amigo -e ADMIN_PASSWORD=senha central-api pnpm db:seed
-  docker compose -f docker-compose.central.yml exec db psql -U mpw -d mpw -c "UPDATE users SET role = 'user' WHERE username = 'amigo';"
-  ```
+### Cadastrar amigos
+
+Logado no painel com o usuário admin, abra **Usuários** (o link só aparece para administradores):
+
+- **Novo usuário**: escolha o nome (3 a 64 caracteres: letras sem acento, números, `.`, `-` ou `_`), clique em **gerar senha forte**, copie a senha (ela só aparece até você salvar) e clique em **Criar usuário**. Passe o usuário e a senha ao amigo por um canal privado.
+- **desativar** bloqueia o login e revoga as sessões do amigo (o acesso já aberto expira em até 15 minutos); **ativar** libera de novo.
+- **redefinir senha** troca a senha e também revoga todas as sessões abertas do usuário, com o mesmo limite de 15 minutos.
+- **tornar admin / tornar usuário** muda o papel; vale a partir da próxima renovação da sessão dele (até 15 minutos). Ninguém pode desativar nem rebaixar a si mesmo, e a central recusa qualquer operação que deixaria o sistema sem nenhum admin ativo.
+- A página precisa da central: em modo offline ela fica desabilitada.
+
+Para o GitHub Actions, crie um admin só para o CI em vez de usar o seu: em **Usuários → Novo usuário**, nome `ci-release`, papel **administrador**, senha gerada. Use esse usuário e essa senha nos secrets `CENTRAL_ADMIN_USERNAME` e `CENTRAL_ADMIN_PASSWORD` (veja abaixo). Se o secret vazar, basta desativar ou redefinir a senha do `ci-release` sem afetar o seu acesso.
 
 ## Para o admin: publicar uma versão
 
@@ -116,7 +122,7 @@ O workflow `.github/workflows/release.yml` roda a cada tag `v*`: testa tudo, ger
 
 - O repositório no GitHub em `ayresigo/pokeidle-plus` (as imagens vão para `ghcr.io/ayresigo`).
 - Em **Settings → Secrets and variables → Actions**:
-  - secrets `CENTRAL_ADMIN_USERNAME` e `CENTRAL_ADMIN_PASSWORD`: um usuário admin da central;
+  - secrets `CENTRAL_ADMIN_USERNAME` e `CENTRAL_ADMIN_PASSWORD`: o admin dedicado `ci-release` (veja [Cadastrar amigos](#cadastrar-amigos));
   - variable `CENTRAL_API_URL`: a URL HTTPS pública da central (ex.: `https://mpw.exemplo.com`).
 - Depois da primeira release, torne os 5 pacotes públicos: em https://github.com/ayresigo?tab=packages abra cada `mpw-*` → **Package settings** → **Change visibility** → **Public**. Enquanto estiverem privados, os amigos não conseguem baixar as imagens.
 
