@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   ContainerOrchestrator,
+  WorkerConfig,
   WorkerInspect,
   WorkerStatus,
 } from "../orchestrator/types.js";
@@ -10,8 +11,12 @@ class FakeOrchestrator implements ContainerOrchestrator {
   workers = new Map<string, WorkerStatus>();
   startCalls: { id: string; at: number }[] = [];
   stopCalls: string[] = [];
+  eventos: string[] = [];
+  criados: WorkerConfig[] = [];
+  inspecoes = new Map<string, WorkerInspect>();
   listCalls = 0;
   falharStart: string | null = null;
+  falharCreate: string | null = null;
   manterCaido = false;
 
   adicionar(accountId: string, state: string): WorkerStatus {
@@ -32,11 +37,24 @@ class FakeOrchestrator implements ContainerOrchestrator {
     if (worker) worker.state = "exited";
   }
 
-  async createWorker(): Promise<string> {
-    throw new Error("não utilizado");
+  async createWorker(cfg: WorkerConfig): Promise<string> {
+    this.eventos.push(`create:${cfg.accountId}`);
+    if (this.falharCreate) throw new Error(this.falharCreate);
+    this.criados.push(cfg);
+    const worker: WorkerStatus = {
+      id: `novo-${this.criados.length}`,
+      accountId: cfg.accountId,
+      state: "created",
+      health: "none",
+      startedAt: null,
+      restartCount: 0,
+    };
+    this.workers.set(worker.id, worker);
+    return worker.id;
   }
 
   async startWorker(id: string): Promise<void> {
+    this.eventos.push(`start:${id}`);
     this.startCalls.push({ id, at: Date.now() });
     if (this.falharStart) throw new Error(this.falharStart);
     if (this.manterCaido) return;
@@ -51,7 +69,10 @@ class FakeOrchestrator implements ContainerOrchestrator {
     this.stopCalls.push(id);
   }
 
-  async removeWorker(): Promise<void> {}
+  async removeWorker(id: string): Promise<void> {
+    this.eventos.push(`remove:${id}`);
+    this.workers.delete(id);
+  }
 
   async listWorkers(): Promise<WorkerStatus[]> {
     this.listCalls += 1;
@@ -65,8 +86,9 @@ class FakeOrchestrator implements ContainerOrchestrator {
     return async () => {};
   }
   async pullImage(): Promise<void> {}
-  async inspectWorker(): Promise<WorkerInspect> {
-    return { env: {}, labels: {}, image: "", imageRef: "" };
+  async inspectWorker(id: string): Promise<WorkerInspect> {
+    this.eventos.push(`inspect:${id}`);
+    return this.inspecoes.get(id) ?? { env: {}, labels: {}, image: "", imageRef: "" };
   }
   async createUpdater(): Promise<string> {
     return "updater";
@@ -305,5 +327,147 @@ describe("Supervisor", () => {
       refreshToken: "refresh-novo",
     });
     expect(sup.tokensConhecidos("outra")).toBeNull();
+  });
+
+  describe("restart de crash com tokens renovados", () => {
+    const TOKENS_NOVOS = { accessToken: "access-novo", refreshToken: "refresh-novo" };
+
+    function inspecaoCom(accessToken: string, refreshToken: string): WorkerInspect {
+      return {
+        env: {
+          ACCOUNT_ID: "acc1",
+          ACCESS_TOKEN: accessToken,
+          REFRESH_TOKEN: refreshToken,
+          SOLVER_KEY: "chave",
+        },
+        labels: {
+          "mpw.managed": "true",
+          "mpw.account-id": "acc1",
+          "minha-label": "acc1",
+        },
+        image: "ghcr.io/multiacc-pokeidle/mpw-worker@sha256:atual",
+        imageRef: "ghcr.io/multiacc-pokeidle/mpw-worker:1.0.0",
+      };
+    }
+
+    async function observarTokensECrashar(): Promise<void> {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          new Response(JSON.stringify({ state: "in-game", tokens: TOKENS_NOVOS }), {
+            status: 200,
+          }),
+        ),
+      );
+      sup.setOnTokensRenovados(async () => {});
+      orch.adicionar("acc1", "running");
+      sup.desireRunning("acc1");
+      sup.start();
+      await tick(0);
+      expect(sup.tokensConhecidos("acc1")).toEqual(TOKENS_NOVOS);
+      orch.eventos = [];
+      orch.derrubar("acc1");
+    }
+
+    it("recria o container com os tokens conhecidos quando diferem da env atual", async () => {
+      orch.inspecoes.set("w-acc1", inspecaoCom("access-velho", "refresh-velho"));
+      await observarTokensECrashar();
+
+      await tick(10_000);
+
+      expect(orch.eventos).toEqual([
+        "inspect:w-acc1",
+        "remove:w-acc1",
+        "create:acc1",
+        "start:novo-1",
+      ]);
+      expect(orch.criados).toEqual([
+        {
+          accountId: "acc1",
+          imageRef: "ghcr.io/multiacc-pokeidle/mpw-worker@sha256:atual",
+          env: {
+            ACCOUNT_ID: "acc1",
+            ACCESS_TOKEN: "access-novo",
+            REFRESH_TOKEN: "refresh-novo",
+            SOLVER_KEY: "chave",
+          },
+          labels: { "minha-label": "acc1" },
+        },
+      ]);
+      expect(orch.startCalls.map((c) => c.id)).not.toContain("w-acc1");
+      expect(sup.getSnapshot()[0]).toMatchObject({ backoffAtual: 60_000, lastError: null });
+    });
+
+    it("sem tokens conhecidos reinicia o mesmo container via startWorker", async () => {
+      orch.inspecoes.set("w-acc1", inspecaoCom("access-velho", "refresh-velho"));
+      orch.adicionar("acc1", "exited");
+      sup.desireRunning("acc1");
+      sup.start();
+      await tick(0);
+
+      expect(orch.eventos).toEqual(["start:w-acc1"]);
+      expect(orch.criados).toHaveLength(0);
+    });
+
+    it("com tokens conhecidos iguais aos da env reinicia o mesmo container", async () => {
+      orch.inspecoes.set("w-acc1", inspecaoCom("access-novo", "refresh-novo"));
+      await observarTokensECrashar();
+
+      await tick(10_000);
+
+      expect(orch.eventos).toEqual(["inspect:w-acc1", "start:w-acc1"]);
+      expect(orch.criados).toHaveLength(0);
+    });
+
+    it("falha no create conta no backoff e a recriação é retentada após o backoff", async () => {
+      orch.inspecoes.set("w-acc1", inspecaoCom("access-velho", "refresh-velho"));
+      await observarTokensECrashar();
+      orch.falharCreate = "docker recusou criar";
+
+      await tick(10_000);
+
+      expect(orch.eventos).toEqual(["inspect:w-acc1", "remove:w-acc1", "create:acc1"]);
+      expect(sup.getSnapshot()[0]).toMatchObject({
+        accountId: "acc1",
+        backoffAtual: 60_000,
+        lastError: "docker recusou criar",
+      });
+
+      await tick(10_000);
+      expect(orch.eventos).toHaveLength(3);
+      expect(sup.getSnapshot()).toHaveLength(1);
+      expect(sup.getSnapshot()[0]).toMatchObject({ accountId: "acc1", backoffAtual: 60_000 });
+
+      orch.falharCreate = null;
+      await tick(50_000);
+
+      expect(orch.eventos.slice(3)).toEqual(["create:acc1", "start:novo-1"]);
+      expect(orch.criados[0].env).toMatchObject({
+        ACCESS_TOKEN: "access-novo",
+        REFRESH_TOKEN: "refresh-novo",
+      });
+      expect(sup.getSnapshot()[0]).toMatchObject({ backoffAtual: 120_000, lastError: null });
+    });
+
+    it("start falho após recriar retenta iniciando o container novo", async () => {
+      orch.inspecoes.set("w-acc1", inspecaoCom("access-velho", "refresh-velho"));
+      await observarTokensECrashar();
+      orch.falharStart = "falha ao iniciar";
+
+      await tick(10_000);
+      expect(orch.eventos).toEqual([
+        "inspect:w-acc1",
+        "remove:w-acc1",
+        "create:acc1",
+        "start:novo-1",
+      ]);
+      orch.inspecoes.set("novo-1", inspecaoCom("access-novo", "refresh-novo"));
+      orch.falharStart = null;
+
+      await tick(60_000);
+
+      expect(orch.eventos.slice(4)).toEqual(["inspect:novo-1", "start:novo-1"]);
+      expect(orch.criados).toHaveLength(1);
+    });
   });
 });

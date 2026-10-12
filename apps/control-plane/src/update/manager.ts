@@ -1,10 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import {
-  LABEL_ACCOUNT,
-  LABEL_MANAGED,
-  repositorioDaImagem,
-} from "../orchestrator/orchestrator.js";
+import { repositorioDaImagem } from "../orchestrator/orchestrator.js";
+import { configDeRecriacao } from "../orchestrator/recriar.js";
 import type {
   ContainerOrchestrator,
   WorkerInspect,
@@ -288,19 +285,18 @@ export class UpdateManager {
   private async recriarWorker({ worker, inspecao }: AlvoRecreate, imagem: string): Promise<void> {
     const { orchestrator, supervisor } = this.opts;
     const { accountId } = worker;
-    const tokens = supervisor.tokensConhecidos(accountId);
-    const env = tokens
-      ? { ...inspecao.env, ACCESS_TOKEN: tokens.accessToken, REFRESH_TOKEN: tokens.refreshToken }
-      : inspecao.env;
-    const labels = { ...inspecao.labels };
-    delete labels[LABEL_MANAGED];
-    delete labels[LABEL_ACCOUNT];
+    const config = configDeRecriacao(
+      accountId,
+      inspecao,
+      imagem,
+      supervisor.tokensConhecidos(accountId),
+    );
 
     await orchestrator.stopWorker(worker.id, DRAIN_STOP_SEGUNDOS);
     await orchestrator.removeWorker(worker.id);
     let novoId: string | null = null;
     try {
-      novoId = await orchestrator.createWorker({ accountId, imageRef: imagem, env, labels });
+      novoId = await orchestrator.createWorker(config);
       await orchestrator.startWorker(novoId);
       await this.aguardarSaudavel(accountId);
     } catch (err) {
@@ -310,10 +306,8 @@ export class UpdateManager {
           await orchestrator.removeWorker(novoId);
         }
         const restauradoId = await orchestrator.createWorker({
-          accountId,
+          ...config,
           imageRef: inspecao.image,
-          env,
-          labels,
         });
         await orchestrator.startWorker(restauradoId);
       } catch (errCompensacao) {

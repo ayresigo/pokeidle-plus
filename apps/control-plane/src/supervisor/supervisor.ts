@@ -1,6 +1,8 @@
 import { EventEmitter } from "node:events";
+import { configDeRecriacao, envComTokens } from "../orchestrator/recriar.js";
 import type {
   ContainerOrchestrator,
+  WorkerConfig,
   WorkerStatus,
 } from "../orchestrator/types.js";
 
@@ -42,12 +44,18 @@ interface EstadoSupervisao {
   lastError: string | null;
 }
 
+interface RecriacaoPendente {
+  worker: WorkerStatus;
+  config: WorkerConfig;
+}
+
 export class Supervisor {
   readonly mudancas = new EventEmitter();
   private estados = new Map<string, EstadoSupervisao>();
   private ultimaLista: WorkerStatus[] = [];
   private ultimosTokens = new Map<string, TokensRenovados>();
   private tokensObservados = new Map<string, TokensRenovados>();
+  private recriacoesPendentes = new Map<string, RecriacaoPendente>();
   private pausados = new Set<string>();
   private ultimoSnapshotSerial = "[]";
   private onTokensRenovados: CallbackTokensRenovados | null = null;
@@ -67,9 +75,11 @@ export class Supervisor {
       pollsEstaveis: 0,
       lastError: null,
     });
+    this.recriacoesPendentes.delete(accountId);
   }
 
   desireStopped(accountId: string): void {
+    this.recriacoesPendentes.delete(accountId);
     const atual = this.estados.get(accountId);
     if (atual) {
       atual.desired = "stopped";
@@ -130,20 +140,28 @@ export class Supervisor {
     if (this.emPoll) return;
     this.emPoll = true;
     try {
-      this.ultimaLista = await this.orchestrator.listWorkers();
+      const lista = await this.orchestrator.listWorkers();
+      const presentes = new Set(lista.map((worker) => worker.accountId));
+      for (const [accountId, pendente] of this.recriacoesPendentes) {
+        if (!presentes.has(accountId)) lista.push(pendente.worker);
+      }
+      this.ultimaLista = lista;
       for (const worker of this.ultimaLista) {
         const estado = this.estados.get(worker.accountId);
         if (!estado || estado.desired !== "running" || this.pausados.has(worker.accountId)) {
           continue;
         }
 
-        const caido = worker.state === "exited" || worker.state === "dead";
+        const caido =
+          worker.state === "exited" ||
+          worker.state === "dead" ||
+          (worker.state === "created" && this.recriacoesPendentes.has(worker.accountId));
         if (caido) {
           estado.pollsEstaveis = 0;
           const agora = Date.now();
           if (estado.falhas === 0 || agora >= estado.proximaTentativa) {
             try {
-              await this.orchestrator.startWorker(worker.id);
+              await this.reiniciar(worker, !presentes.has(worker.accountId));
               estado.lastError = null;
             } catch (err) {
               estado.lastError =
@@ -154,6 +172,7 @@ export class Supervisor {
               agora + calcularBackoff(estado.falhas);
           }
         } else if (worker.state === "running") {
+          this.recriacoesPendentes.delete(worker.accountId);
           estado.pollsEstaveis += 1;
           if (
             estado.pollsEstaveis >= POLLS_PARA_ESTAVEL &&
@@ -181,6 +200,40 @@ export class Supervisor {
     } finally {
       this.emPoll = false;
     }
+  }
+
+  private async reiniciar(worker: WorkerStatus, ausente: boolean): Promise<void> {
+    const { accountId } = worker;
+    const tokens = this.tokensConhecidos(accountId);
+    const pendente = this.recriacoesPendentes.get(accountId);
+    if (pendente && ausente) {
+      await this.criarEIniciar(accountId, {
+        ...pendente.config,
+        env: envComTokens(pendente.config.env, tokens),
+      });
+      return;
+    }
+    if (tokens) {
+      const inspecao = await this.orchestrator.inspectWorker(worker.id);
+      if (
+        inspecao.env.ACCESS_TOKEN !== tokens.accessToken ||
+        inspecao.env.REFRESH_TOKEN !== tokens.refreshToken
+      ) {
+        const config = configDeRecriacao(accountId, inspecao, inspecao.image, tokens);
+        await this.orchestrator.removeWorker(worker.id);
+        this.recriacoesPendentes.set(accountId, { worker: { ...worker }, config });
+        await this.criarEIniciar(accountId, config);
+        return;
+      }
+    }
+    await this.orchestrator.startWorker(worker.id);
+    this.recriacoesPendentes.delete(accountId);
+  }
+
+  private async criarEIniciar(accountId: string, config: WorkerConfig): Promise<void> {
+    const id = await this.orchestrator.createWorker(config);
+    await this.orchestrator.startWorker(id);
+    this.recriacoesPendentes.delete(accountId);
   }
 
   private async verificarTokens(accountId: string): Promise<void> {
