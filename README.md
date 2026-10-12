@@ -114,7 +114,7 @@ O workflow `.github/workflows/release.yml` roda a cada tag `v*`: testa tudo, ger
 
 ### Pré-requisitos (uma vez)
 
-- O repositório no GitHub em `ayresigo/multiacc-pokeidle` (as imagens vão para `ghcr.io/ayresigo`).
+- O repositório no GitHub em `ayresigo/pokeidle-plus` (as imagens vão para `ghcr.io/ayresigo`).
 - Em **Settings → Secrets and variables → Actions**:
   - secrets `CENTRAL_ADMIN_USERNAME` e `CENTRAL_ADMIN_PASSWORD`: um usuário admin da central;
   - variable `CENTRAL_API_URL`: a URL HTTPS pública da central (ex.: `https://mpw.exemplo.com`).
