@@ -40,6 +40,8 @@ function criarOrchestratorFake(): OrchestratorFake {
     pullImage: vi.fn(async () => {}),
     inspectWorker: vi.fn(async () => ({ env: {}, labels: {}, image: "", imageRef: "" })),
     createUpdater: vi.fn(async () => "updater"),
+    inspectUpdater: vi.fn(async () => null),
+    removeUpdater: vi.fn(async () => {}),
     createOneShot: vi.fn(async () => "oneshot"),
     waitOneShot: vi.fn(async () => ({ exitCode: 0, stdout: "" })),
     removeOneShot: vi.fn(async () => {}),

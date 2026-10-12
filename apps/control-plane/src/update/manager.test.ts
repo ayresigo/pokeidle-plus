@@ -7,6 +7,7 @@ import { buildApp } from "../app.js";
 import type {
   ContainerOrchestrator,
   UpdaterConfig,
+  UpdaterInspect,
   WorkerConfig,
   WorkerInspect,
   WorkerStatus,
@@ -38,6 +39,7 @@ interface OrchestratorFake extends ContainerOrchestrator {
   falharPull: boolean;
   falharCreate: ((cfg: WorkerConfig) => boolean) | null;
   rollbackAoCriarUpdater: string | null;
+  updater: UpdaterInspect | null;
 }
 
 function criarOrchestratorFake(dir: string): OrchestratorFake {
@@ -50,6 +52,7 @@ function criarOrchestratorFake(dir: string): OrchestratorFake {
     falharPull: false,
     falharCreate: null,
     rollbackAoCriarUpdater: null,
+    updater: null,
     createWorker: vi.fn(async (cfg: WorkerConfig) => {
       if (fake.falharCreate?.(cfg)) {
         fake.eventos.push(`createWorkerFalhou:${cfg.accountId}`);
@@ -93,6 +96,11 @@ function criarOrchestratorFake(dir: string): OrchestratorFake {
         fake.rollbackAoCriarUpdater = null;
       }
       return "updater-1";
+    }),
+    inspectUpdater: vi.fn(async () => fake.updater),
+    removeUpdater: vi.fn(async () => {
+      fake.eventos.push("removeUpdater");
+      fake.updater = null;
     }),
     createOneShot: vi.fn(async () => "oneshot"),
     waitOneShot: vi.fn(async () => ({ exitCode: 0, stdout: "" })),
@@ -700,7 +708,10 @@ describe("UpdateManager", () => {
       JSON.stringify({ versaoAnterior: "1.0.0", digestAnterior: DIGEST_ANTIGO, ts: new Date().toISOString() }),
     );
     orchestrator.workers = [workerRodando("acc1", "w1"), workerRodando("acc2", "w2")];
-    orchestrator.inspecoes = { w1: inspecaoPadrao("acc1"), w2: inspecaoPadrao("acc2") };
+    orchestrator.inspecoes = {
+      w1: { ...inspecaoPadrao("acc1"), image: DIGEST_NOVO, imageRef: `${REPO_WORKER}:1.1.0` },
+      w2: { ...inspecaoPadrao("acc2"), image: DIGEST_NOVO, imageRef: `${REPO_WORKER}:1.1.0` },
+    };
     stubFetchRede(orchestrator.eventos, { versao: "1.1.0" });
     const manager = criarManager(dir, orchestrator);
 
@@ -816,6 +827,163 @@ describe("UpdateManager", () => {
     expect(await primeiro).toBe("ok");
     expect(orchestrator.updaters).toHaveLength(1);
   });
+
+  describe("resultado do updater", () => {
+    const LOGS_FALHA =
+      "[updater] web: falhou (container ficou unhealthy); restaurando versão anterior\n" +
+      "[updater] falha ao atualizar web para mpw-web:1.1.0: container ficou unhealthy\n";
+
+    function updaterEncerrado(exitCode: number): UpdaterInspect {
+      return { status: "exited", exitCode, targetTag: "1.1.0", logs: exitCode === 0 ? "" : LOGS_FALHA };
+    }
+
+    async function registrarFalha(tag: string): Promise<void> {
+      await writeFile(
+        path.join(dir, "update-failed.json"),
+        JSON.stringify({ tag, erro: `updater saiu com código 1: falhou ${tag}`, ts: new Date().toISOString() }),
+      );
+    }
+
+    async function lerFalha(): Promise<{ tag: string; erro: string; ts: string }> {
+      return JSON.parse(await readFile(path.join(dir, "update-failed.json"), "utf8"));
+    }
+
+    it("updater encerrado com falha grava update-failed.json, remove o container e o check automático não repete a tag", async () => {
+      orchestrator.workers = [workerRodando("acc1", "w1")];
+      orchestrator.inspecoes = { w1: inspecaoPadrao("acc1") };
+      orchestrator.updater = updaterEncerrado(1);
+      stubFetchRede(orchestrator.eventos, { versao: "1.1.0" });
+      const manager = criarManager(dir, orchestrator, { autoUpdateEnv: true });
+
+      await manager.checkForUpdate();
+
+      expect(orchestrator.eventos).toEqual(["removeUpdater"]);
+      const falha = await lerFalha();
+      expect(falha.tag).toBe("1.1.0");
+      expect(falha.erro).toContain("código 1");
+      expect(falha.erro).toContain("falha ao atualizar web para mpw-web:1.1.0: container ficou unhealthy");
+      expect(Number.isNaN(Date.parse(falha.ts))).toBe(false);
+      const status = await manager.getStatus();
+      expect(status.state).toBe("update_failed");
+      expect(status.lastError).toBe(falha.erro);
+
+      await manager.checkForUpdate();
+
+      expect(orchestrator.eventos).toEqual(["removeUpdater"]);
+      expect(orchestrator.updaters).toHaveLength(0);
+      expect((await manager.getStatus()).state).toBe("update_failed");
+    });
+
+    it("check automático dispara normalmente uma tag diferente da que falhou", async () => {
+      await registrarFalha("1.1.0");
+      stubFetchRede(orchestrator.eventos, { versao: "1.2.0" });
+      const manager = criarManager(dir, orchestrator, { autoUpdateEnv: true });
+
+      await manager.checkForUpdate();
+
+      expect(orchestrator.updaters).toEqual([{ imageRef: `${REPO_UPDATER}:1.2.0`, targetTag: "1.2.0" }]);
+      expect((await manager.getStatus()).state).toBe("idle");
+    });
+
+    it("update manual tenta de novo mesmo com falha registrada para a tag e limpa o registro", async () => {
+      await registrarFalha("1.1.0");
+      stubFetchRede(orchestrator.eventos, { versao: "1.1.0" });
+      const manager = criarManager(dir, orchestrator, { autoUpdateEnv: false });
+      await manager.checkForUpdate();
+      expect((await manager.getStatus()).state).toBe("update_failed");
+
+      expect(await manager.applyUpdate()).toBe("ok");
+
+      expect(orchestrator.updaters).toEqual([{ imageRef: `${REPO_UPDATER}:1.1.0`, targetTag: "1.1.0" }]);
+      await expect(readFile(path.join(dir, "update-failed.json"), "utf8")).rejects.toThrow();
+      expect(await manager.getStatus()).toMatchObject({ state: "idle", lastError: null });
+    });
+
+    it("updater encerrado com sucesso apaga o registro de falha e o container", async () => {
+      await registrarFalha("1.1.0");
+      orchestrator.updater = updaterEncerrado(0);
+      const manager = criarManager(dir, orchestrator);
+
+      expect(await manager.conciliarUpdater()).toBe(false);
+
+      expect(orchestrator.eventos).toEqual(["removeUpdater"]);
+      await expect(readFile(path.join(dir, "update-failed.json"), "utf8")).rejects.toThrow();
+    });
+
+    it("no boot registra a falha do updater mesmo com auto-update desligado", async () => {
+      orchestrator.updater = updaterEncerrado(1);
+      stubFetchRede(orchestrator.eventos, { versao: "1.1.0" });
+      const manager = criarManager(dir, orchestrator, { autoUpdateEnv: false });
+
+      manager.start();
+      await vi.waitFor(async () => {
+        expect((await manager.getStatus()).state).toBe("update_failed");
+      });
+      manager.stop();
+
+      expect(orchestrator.eventos).toEqual(["removeUpdater"]);
+      expect((await lerFalha()).tag).toBe("1.1.0");
+    });
+
+    it("updater ainda rodando deixa o applyUpdate ocupado sem tocar em nada", async () => {
+      orchestrator.workers = [workerRodando("acc1", "w1")];
+      orchestrator.inspecoes = { w1: inspecaoPadrao("acc1") };
+      orchestrator.updater = { status: "running", exitCode: 0, targetTag: "1.1.0", logs: "" };
+      stubFetchRede(orchestrator.eventos, { versao: "1.1.0" });
+      const manager = criarManager(dir, orchestrator, { autoUpdateEnv: false });
+      await manager.checkForUpdate();
+
+      expect(await manager.applyUpdate()).toBe("ocupado");
+
+      expect(orchestrator.eventos).toEqual([]);
+      expect((await manager.getStatus()).state).toBe("idle");
+    });
+
+    it("falha registrada para outra versão não aparece no status", async () => {
+      await registrarFalha("1.0.5");
+      stubFetchRede(orchestrator.eventos, { versao: "1.1.0" });
+      const manager = criarManager(dir, orchestrator, { autoUpdateEnv: false });
+      await manager.checkForUpdate();
+
+      expect(await manager.getStatus()).toMatchObject({ state: "idle", lastError: null });
+    });
+  });
+
+  it("update não recria workers que já estão na imagem alvo", async () => {
+    orchestrator.workers = [workerRodando("acc1", "w1"), workerRodando("acc2", "w2")];
+    orchestrator.inspecoes = {
+      w1: { ...inspecaoPadrao("acc1"), image: DIGEST_NOVO, imageRef: `${REPO_WORKER}:1.1.0` },
+      w2: inspecaoPadrao("acc2"),
+    };
+    stubFetchRede(orchestrator.eventos, { versao: "1.1.0" });
+    const manager = criarManager(dir, orchestrator, { autoUpdateEnv: true });
+
+    await manager.checkForUpdate();
+
+    expect(orchestrator.eventos.some((e) => e.endsWith(":w1") && !e.startsWith("inspectWorker"))).toBe(false);
+    expect(orchestrator.eventos).not.toContain("pausar:acc1");
+    expect(orchestrator.eventos).toContain("stopWorker:w2");
+    expect(orchestrator.criados.map((c) => c.accountId)).toEqual(["acc2"]);
+  });
+
+  it("rollback não recria workers que já estão no digest anterior", async () => {
+    await writeFile(
+      path.join(dir, "rollback.json"),
+      JSON.stringify({ versaoAnterior: "1.0.0", digestAnterior: DIGEST_ANTIGO, ts: new Date().toISOString() }),
+    );
+    orchestrator.workers = [workerRodando("acc1", "w1"), workerRodando("acc2", "w2")];
+    orchestrator.inspecoes = {
+      w1: inspecaoPadrao("acc1"),
+      w2: { ...inspecaoPadrao("acc2"), image: DIGEST_NOVO, imageRef: `${REPO_WORKER}:1.1.0` },
+    };
+    stubFetchRede(orchestrator.eventos, { versao: "1.1.0" });
+    const manager = criarManager(dir, orchestrator);
+
+    expect(await manager.rollback()).toBe("ok");
+
+    expect(orchestrator.eventos).not.toContain("stopWorker:w1");
+    expect(orchestrator.criados.map((c) => c.accountId)).toEqual(["acc2"]);
+  });
 });
 
 describe("rotas /update", () => {
@@ -881,6 +1049,25 @@ describe("rotas /update", () => {
       lastError: null,
     });
     expect(typeof resposta.json().lastCheck).toBe("string");
+  });
+
+  it("GET /update/status expõe update_failed com a mensagem do updater para a versão mais nova", async () => {
+    sessionStore.definirAccess(TOKEN_VALIDO);
+    await writeFile(
+      path.join(dir, "update-failed.json"),
+      JSON.stringify({ tag: "1.1.0", erro: "updater saiu com código 1: web unhealthy", ts: new Date().toISOString() }),
+    );
+    stubFetchRede(orchestrator.eventos, { versao: "1.1.0" });
+    await updateManager.checkForUpdate();
+
+    const resposta = await app.inject({ method: "GET", url: "/update/status" });
+
+    expect(resposta.statusCode).toBe(200);
+    expect(resposta.json()).toMatchObject({
+      latestVersion: "1.1.0",
+      state: "update_failed",
+      lastError: "updater saiu com código 1: web unhealthy",
+    });
   });
 
   it("GET /update/status funciona com central fora (grace)", async () => {

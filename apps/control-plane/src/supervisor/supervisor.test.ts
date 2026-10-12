@@ -94,6 +94,10 @@ class FakeOrchestrator implements ContainerOrchestrator {
   async createUpdater(): Promise<string> {
     return "updater";
   }
+  async inspectUpdater(): Promise<null> {
+    return null;
+  }
+  async removeUpdater(): Promise<void> {}
   async createOneShot(): Promise<string> {
     return "oneshot";
   }

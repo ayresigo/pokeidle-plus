@@ -5,6 +5,7 @@ import type {
   LogLineCallback,
   ResultadoOneShot,
   UpdaterConfig,
+  UpdaterInspect,
   WorkerConfig,
   WorkerInspect,
   WorkerStatus,
@@ -16,6 +17,8 @@ export const NOME_UPDATER = "mpw-updater";
 
 const ANO_ZERO = "0001-01-01T00:00:00Z";
 const DOCKER_SOCKET = "/var/run/docker.sock";
+const LINHAS_LOG_UPDATER = 20;
+const PREFIXO_TARGET_TAG = "TARGET_TAG=";
 
 export function repositorioDaImagem(ref: string): string {
   return ref.replace(/@.*$/, "").replace(/:[^:/]+$/, "");
@@ -199,22 +202,50 @@ export class DockerOrchestrator implements ContainerOrchestrator {
   }
 
   async createUpdater(cfg: UpdaterConfig): Promise<string> {
-    await this.docker
-      .getContainer(NOME_UPDATER)
-      .remove({ force: true })
-      .catch(() => undefined);
+    await this.removeUpdater();
     const container = await this.docker.createContainer({
       name: NOME_UPDATER,
       Image: cfg.imageRef,
-      Env: [`TARGET_TAG=${cfg.targetTag}`],
+      Env: [`${PREFIXO_TARGET_TAG}${cfg.targetTag}`],
       Labels: { [LABEL_MANAGED]: "false" },
       HostConfig: {
-        AutoRemove: true,
+        AutoRemove: false,
         Binds: [`${DOCKER_SOCKET}:${DOCKER_SOCKET}`],
         ...(this.network ? { NetworkMode: this.network } : {}),
       },
     });
     return container.id;
+  }
+
+  async inspectUpdater(): Promise<UpdaterInspect | null> {
+    const info = await this.docker
+      .getContainer(NOME_UPDATER)
+      .inspect()
+      .catch((erro: { statusCode?: number }) => {
+        if (erro.statusCode === 404) return null;
+        throw erro;
+      });
+    if (info === null) return null;
+    const targetTag =
+      info.Config.Env?.find((entrada) => entrada.startsWith(PREFIXO_TARGET_TAG))?.slice(
+        PREFIXO_TARGET_TAG.length,
+      ) ?? null;
+    const encerrado = !info.State.Running && info.State.Status !== "created";
+    return {
+      status: info.State.Status,
+      exitCode: info.State.ExitCode,
+      targetTag,
+      logs: encerrado ? await this.workerLogs(info.Id, LINHAS_LOG_UPDATER) : "",
+    };
+  }
+
+  async removeUpdater(): Promise<void> {
+    await this.docker
+      .getContainer(NOME_UPDATER)
+      .remove({ force: true })
+      .catch((erro: { statusCode?: number }) => {
+        if (erro.statusCode !== 404) throw erro;
+      });
   }
 
   async createOneShot(image: string, cmd: string[]): Promise<string> {

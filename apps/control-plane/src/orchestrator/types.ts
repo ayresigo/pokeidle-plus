@@ -27,6 +27,13 @@ export interface UpdaterConfig {
   targetTag: string;
 }
 
+export interface UpdaterInspect {
+  status: string;
+  exitCode: number;
+  targetTag: string | null;
+  logs: string;
+}
+
 export type LogLineCallback = (line: string, ts: Date) => void;
 
 export interface ResultadoOneShot {
@@ -45,6 +52,8 @@ export interface ContainerOrchestrator {
   pullImage(ref: string): Promise<void>;
   inspectWorker(id: string): Promise<WorkerInspect>;
   createUpdater(cfg: UpdaterConfig): Promise<string>;
+  inspectUpdater(): Promise<UpdaterInspect | null>;
+  removeUpdater(): Promise<void>;
   createOneShot(image: string, cmd: string[]): Promise<string>;
   waitOneShot(id: string, timeoutMs: number): Promise<ResultadoOneShot>;
   removeOneShot(id: string): Promise<void>;

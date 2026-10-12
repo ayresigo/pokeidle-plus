@@ -32,6 +32,7 @@ export interface UpdateStatus {
 }
 
 export type ResultadoApply = "ok" | "sem_atualizacao" | "ocupado" | "falhou";
+export type OrigemUpdate = "manual" | "automatico";
 export type ResultadoRollback = "ok" | "sem_rollback" | "ocupado" | "falhou";
 
 export type ControleSupervisor = Pick<Supervisor, "pausar" | "retomar" | "tokensConhecidos">;
@@ -57,6 +58,12 @@ interface RollbackInfo {
   ts: string;
 }
 
+interface FalhaUpdater {
+  tag: string;
+  erro: string;
+  ts: string;
+}
+
 interface AlvoRecreate {
   worker: WorkerStatus;
   inspecao: WorkerInspect;
@@ -66,6 +73,8 @@ const INTERVALO_PADRAO_MS = 6 * 3600 * 1000;
 const HEALTH_TIMEOUT_PADRAO_MS = 60_000;
 const HEALTH_POLL_PADRAO_MS = 2_000;
 const DRAIN_STOP_SEGUNDOS = 30;
+const STATUS_UPDATER_ATIVO: Record<string, true> = { running: true, restarting: true, paused: true };
+const STATUS_UPDATER_ENCERRADO: Record<string, true> = { exited: true, dead: true };
 
 function mensagemDeErro(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -84,17 +93,23 @@ export class UpdateManager {
   private readonly repoUpdater: string;
   private readonly caminhoSettings: string;
   private readonly caminhoRollback: string;
+  private readonly caminhoFalha: string;
 
   constructor(private readonly opts: UpdateManagerOpts) {
     this.repoWorker = repositorioDaImagem(opts.workerImage);
     this.repoUpdater = opts.updaterImage;
     this.caminhoSettings = path.join(opts.dataDir, "settings.json");
     this.caminhoRollback = path.join(opts.dataDir, "rollback.json");
+    this.caminhoFalha = path.join(opts.dataDir, "update-failed.json");
   }
 
   start(): void {
     if (this.timer) return;
-    void this.checkForUpdate();
+    void this.conciliarUpdater()
+      .catch((err: unknown) => {
+        this.lastError = mensagemDeErro(err);
+      })
+      .then(() => this.checkForUpdate());
     this.timer = setInterval(
       () => void this.checkForUpdate(),
       this.opts.checkIntervalMs ?? INTERVALO_PADRAO_MS,
@@ -110,6 +125,12 @@ export class UpdateManager {
 
   async getStatus(): Promise<UpdateStatus> {
     const rollback = await this.lerRollback();
+    const falha = await this.lerFalha();
+    const falhaVisivel =
+      falha !== null &&
+      falha.tag === this.latestVersion &&
+      !this.ocupado() &&
+      this.state !== "update_failed";
     return {
       currentVersion: this.opts.currentVersion,
       latestVersion: this.latestVersion,
@@ -118,8 +139,8 @@ export class UpdateManager {
       updateAvailable: this.updateAvailable,
       autoUpdate: await this.autoUpdateLigado(),
       lastCheck: this.lastCheck,
-      lastError: this.lastError,
-      state: this.state,
+      lastError: falhaVisivel ? falha.erro : this.lastError,
+      state: falhaVisivel ? "update_failed" : this.state,
       rollbackDisponivel: rollback !== null,
       rollbackVersao: rollback?.versaoAnterior ?? null,
     };
@@ -174,24 +195,34 @@ export class UpdateManager {
       return;
     }
     if (this.updateAvailable && (await this.autoUpdateLigado())) {
-      await this.applyUpdate();
+      await this.applyUpdate("automatico");
     }
   }
 
-  async applyUpdate(): Promise<ResultadoApply> {
+  async applyUpdate(origem: OrigemUpdate = "manual"): Promise<ResultadoApply> {
     if (this.ocupado()) return "ocupado";
     if (!this.updateAvailable || this.latestVersion === null) return "sem_atualizacao";
     const tag = this.latestVersion;
     const novaImagem = `${this.repoWorker}:${tag}`;
+    const estadoAnterior = this.state;
     this.state = "updating";
-    this.lastError = null;
     try {
+      if (await this.conciliarUpdater()) {
+        this.state = estadoAnterior;
+        return "ocupado";
+      }
+      if (origem === "automatico" && (await this.lerFalha())?.tag === tag) {
+        this.state = estadoAnterior;
+        return "sem_atualizacao";
+      }
+      this.lastError = null;
       await this.opts.orchestrator.pullImage(novaImagem);
       const alvos = await this.inspecionarWorkers();
       await this.registrarRollback(alvos, novaImagem);
       await this.recriarEmSequencia(alvos, novaImagem);
       const imagemUpdater = `${this.repoUpdater}:${tag}`;
       await this.opts.orchestrator.pullImage(imagemUpdater);
+      await rm(this.caminhoFalha, { force: true });
       const updaterId = await this.opts.orchestrator.createUpdater({
         imageRef: imagemUpdater,
         targetTag: tag,
@@ -232,6 +263,29 @@ export class UpdateManager {
     await writeFile(this.caminhoSettings, JSON.stringify(settings));
   }
 
+  async conciliarUpdater(): Promise<boolean> {
+    const { orchestrator } = this.opts;
+    const updater = await orchestrator.inspectUpdater();
+    if (updater === null) return false;
+    if (STATUS_UPDATER_ATIVO[updater.status]) return true;
+    if (STATUS_UPDATER_ENCERRADO[updater.status]) {
+      if (updater.exitCode === 0) {
+        await rm(this.caminhoFalha, { force: true });
+      } else {
+        const logs = updater.logs.trim();
+        const falha: FalhaUpdater = {
+          tag: updater.targetTag ?? "",
+          erro: `updater saiu com código ${updater.exitCode}${logs ? `: ${logs}` : ""}`,
+          ts: new Date().toISOString(),
+        };
+        await mkdir(this.opts.dataDir, { recursive: true });
+        await writeFile(this.caminhoFalha, JSON.stringify(falha));
+      }
+    }
+    await orchestrator.removeUpdater();
+    return false;
+  }
+
   private ocupado(): boolean {
     return (
       this.state === "checking" ||
@@ -265,6 +319,14 @@ export class UpdateManager {
     }
   }
 
+  private async lerFalha(): Promise<FalhaUpdater | null> {
+    try {
+      return JSON.parse(await readFile(this.caminhoFalha, "utf8")) as FalhaUpdater;
+    } catch {
+      return null;
+    }
+  }
+
   private async registrarRollback(alvos: AlvoRecreate[], novaImagem: string): Promise<void> {
     const existente = await this.lerRollback();
     if (existente?.versaoAnterior === this.opts.currentVersion) return;
@@ -291,6 +353,7 @@ export class UpdateManager {
   private async recriarEmSequencia(alvos: AlvoRecreate[], imagem: string): Promise<void> {
     const { supervisor } = this.opts;
     for (const alvo of alvos) {
+      if (alvo.inspecao.imageRef === imagem || alvo.inspecao.image === imagem) continue;
       supervisor.pausar(alvo.worker.accountId);
       try {
         await this.recriarWorker(alvo, imagem);
