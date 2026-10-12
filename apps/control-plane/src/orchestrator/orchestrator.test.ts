@@ -159,4 +159,52 @@ describe.skipIf(!dockerDisponivel)("DockerOrchestrator", () => {
     },
     60_000,
   );
+
+  it(
+    "inspectWorker devolve env própria, labels e digest do repositório",
+    async () => {
+      const conta = accountId();
+      const id = await orchestrator.createWorker({
+        accountId: conta,
+        imageRef: IMAGEM,
+        env: { FOO: "bar", COM_IGUAL: "a=b" },
+        labels: { "minha-label": "x" },
+        cmd: ["sleep", "3600"],
+      });
+      criados.push(id);
+
+      const inspecao = await orchestrator.inspectWorker(id);
+
+      expect(inspecao.env).toEqual({ FOO: "bar", COM_IGUAL: "a=b" });
+      expect(inspecao.labels).toMatchObject({
+        "minha-label": "x",
+        "mpw.managed": "true",
+        "mpw.account-id": conta,
+      });
+      expect(inspecao.image).toMatch(/^alpine@sha256:[0-9a-f]{64}$/);
+      expect(inspecao.imageRef).toBe(IMAGEM);
+    },
+    60_000,
+  );
+
+  it(
+    "createUpdater cria mpw-updater com TARGET_TAG e socket, fora do listWorkers",
+    async () => {
+      const id = await orchestrator.createUpdater({
+        imageRef: IMAGEM,
+        targetTag: "9.9.9",
+      });
+      criados.push(id);
+
+      const inspecao = await docker.getContainer(id).inspect();
+      expect(inspecao.Name).toBe("/mpw-updater");
+      expect(inspecao.Config.Env).toContain("TARGET_TAG=9.9.9");
+      expect(inspecao.HostConfig.Binds).toContain(
+        "/var/run/docker.sock:/var/run/docker.sock",
+      );
+      const workers = await orchestrator.listWorkers();
+      expect(workers.map((w: WorkerStatus) => w.id)).not.toContain(id);
+    },
+    60_000,
+  );
 });

@@ -15,6 +15,18 @@ export interface WorkerStatus {
   restartCount: number;
 }
 
+export interface WorkerInspect {
+  env: Record<string, string>;
+  labels: Record<string, string>;
+  image: string;
+  imageRef: string;
+}
+
+export interface UpdaterConfig {
+  imageRef: string;
+  targetTag: string;
+}
+
 export type LogLineCallback = (line: string, ts: Date) => void;
 
 export interface ContainerOrchestrator {
@@ -26,4 +38,6 @@ export interface ContainerOrchestrator {
   workerLogs(id: string, tail: number): Promise<string>;
   followLogs(id: string, onLine: LogLineCallback): Promise<() => Promise<void>>;
   pullImage(ref: string): Promise<void>;
+  inspectWorker(id: string): Promise<WorkerInspect>;
+  createUpdater(cfg: UpdaterConfig): Promise<string>;
 }

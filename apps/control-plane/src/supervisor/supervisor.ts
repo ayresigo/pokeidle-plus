@@ -47,6 +47,8 @@ export class Supervisor {
   private estados = new Map<string, EstadoSupervisao>();
   private ultimaLista: WorkerStatus[] = [];
   private ultimosTokens = new Map<string, TokensRenovados>();
+  private tokensObservados = new Map<string, TokensRenovados>();
+  private pausados = new Set<string>();
   private ultimoSnapshotSerial = "[]";
   private onTokensRenovados: CallbackTokensRenovados | null = null;
   private timer: NodeJS.Timeout | null = null;
@@ -99,6 +101,18 @@ export class Supervisor {
     this.onTokensRenovados = callback;
   }
 
+  pausar(accountId: string): void {
+    this.pausados.add(accountId);
+  }
+
+  retomar(accountId: string): void {
+    this.pausados.delete(accountId);
+  }
+
+  tokensConhecidos(accountId: string): TokensRenovados | null {
+    return this.tokensObservados.get(accountId) ?? null;
+  }
+
   getSnapshot(): WorkerSnapshot[] {
     return this.ultimaLista.map((worker) => {
       const estado = this.estados.get(worker.accountId);
@@ -119,7 +133,9 @@ export class Supervisor {
       this.ultimaLista = await this.orchestrator.listWorkers();
       for (const worker of this.ultimaLista) {
         const estado = this.estados.get(worker.accountId);
-        if (!estado || estado.desired !== "running") continue;
+        if (!estado || estado.desired !== "running" || this.pausados.has(worker.accountId)) {
+          continue;
+        }
 
         const caido = worker.state === "exited" || worker.state === "dead";
         if (caido) {
@@ -178,6 +194,10 @@ export class Supervisor {
     }
     const tokens = corpo.tokens;
     if (!tokens?.accessToken || !tokens.refreshToken) return;
+    this.tokensObservados.set(accountId, {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+    });
     const anterior = this.ultimosTokens.get(accountId);
     if (
       anterior &&

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   ContainerOrchestrator,
+  WorkerInspect,
   WorkerStatus,
 } from "../orchestrator/types.js";
 import { Supervisor, calcularBackoff } from "./supervisor.js";
@@ -64,6 +65,12 @@ class FakeOrchestrator implements ContainerOrchestrator {
     return async () => {};
   }
   async pullImage(): Promise<void> {}
+  async inspectWorker(): Promise<WorkerInspect> {
+    return { env: {}, labels: {}, image: "", imageRef: "" };
+  }
+  async createUpdater(): Promise<string> {
+    return "updater";
+  }
 }
 
 describe("calcularBackoff", () => {
@@ -92,6 +99,7 @@ describe("Supervisor", () => {
 
   afterEach(() => {
     sup.stop();
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -254,5 +262,48 @@ describe("Supervisor", () => {
 
   it("snapshot é vazio antes do primeiro poll", () => {
     expect(sup.getSnapshot()).toEqual([]);
+  });
+
+  it("conta pausada com container exited não é reiniciada até ser retomada", async () => {
+    orch.adicionar("acc1", "exited");
+    sup.desireRunning("acc1");
+    sup.pausar("acc1");
+    sup.start();
+    await tick(0);
+    await tick(10_000);
+    expect(orch.startCalls).toHaveLength(0);
+
+    sup.retomar("acc1");
+    await tick(10_000);
+    expect(orch.startCalls.map((c) => c.at)).toEqual([20_000]);
+  });
+
+  it("tokensConhecidos expõe os tokens do /health mesmo se o write-back falhar", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            state: "in-game",
+            tokens: { accessToken: "access-novo", refreshToken: "refresh-novo" },
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    sup.setOnTokensRenovados(async () => {
+      throw new Error("central fora do ar");
+    });
+    orch.adicionar("acc1", "running");
+    expect(sup.tokensConhecidos("acc1")).toBeNull();
+
+    sup.start();
+    await tick(0);
+
+    expect(sup.tokensConhecidos("acc1")).toEqual({
+      accessToken: "access-novo",
+      refreshToken: "refresh-novo",
+    });
+    expect(sup.tokensConhecidos("outra")).toBeNull();
   });
 });

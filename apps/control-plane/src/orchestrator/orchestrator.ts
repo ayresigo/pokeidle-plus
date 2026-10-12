@@ -3,14 +3,22 @@ import Docker from "dockerode";
 import type {
   ContainerOrchestrator,
   LogLineCallback,
+  UpdaterConfig,
   WorkerConfig,
+  WorkerInspect,
   WorkerStatus,
 } from "./types.js";
 
 export const LABEL_MANAGED = "mpw.managed";
 export const LABEL_ACCOUNT = "mpw.account-id";
+export const NOME_UPDATER = "mpw-updater";
 
 const ANO_ZERO = "0001-01-01T00:00:00Z";
+const DOCKER_SOCKET = "/var/run/docker.sock";
+
+export function repositorioDaImagem(ref: string): string {
+  return ref.replace(/@.*$/, "").replace(/:[^:/]+$/, "");
+}
 
 function demuxLogs(bruto: Buffer): string {
   const partes: Buffer[] = [];
@@ -156,5 +164,48 @@ export class DockerOrchestrator implements ContainerOrchestrator {
         erro ? reject(erro) : resolve(),
       );
     });
+  }
+
+  async inspectWorker(id: string): Promise<WorkerInspect> {
+    const info = await this.docker.getContainer(id).inspect();
+    const imagem = await this.docker
+      .getImage(info.Image)
+      .inspect()
+      .catch(() => null);
+    const envDaImagem = new Set(imagem?.Config?.Env ?? []);
+    const env: Record<string, string> = {};
+    for (const entrada of info.Config.Env ?? []) {
+      if (envDaImagem.has(entrada)) continue;
+      const idx = entrada.indexOf("=");
+      if (idx <= 0) continue;
+      env[entrada.slice(0, idx)] = entrada.slice(idx + 1);
+    }
+    const repositorio = repositorioDaImagem(info.Config.Image);
+    const digest = imagem?.RepoDigests?.find((d) => d.startsWith(`${repositorio}@`));
+    return {
+      env,
+      labels: info.Config.Labels ?? {},
+      image: digest ?? info.Config.Image,
+      imageRef: info.Config.Image,
+    };
+  }
+
+  async createUpdater(cfg: UpdaterConfig): Promise<string> {
+    await this.docker
+      .getContainer(NOME_UPDATER)
+      .remove({ force: true })
+      .catch(() => undefined);
+    const container = await this.docker.createContainer({
+      name: NOME_UPDATER,
+      Image: cfg.imageRef,
+      Env: [`TARGET_TAG=${cfg.targetTag}`],
+      Labels: { [LABEL_MANAGED]: "false" },
+      HostConfig: {
+        AutoRemove: true,
+        Binds: [`${DOCKER_SOCKET}:${DOCKER_SOCKET}`],
+        ...(this.network ? { NetworkMode: this.network } : {}),
+      },
+    });
+    return container.id;
   }
 }

@@ -38,6 +38,8 @@ function criarOrchestratorFake(): OrchestratorFake {
     listWorkers: vi.fn(async () => fake.workers),
     workerLogs: vi.fn(async (id: string) => fake.logsPorId[id] ?? ""),
     pullImage: vi.fn(async () => {}),
+    inspectWorker: vi.fn(async () => ({ env: {}, labels: {}, image: "", imageRef: "" })),
+    createUpdater: vi.fn(async () => "updater"),
     followLogs: vi.fn(async (id: string, onLine: LogLineCallback) => {
       fake.seguidores.set(id, onLine);
       return async () => {

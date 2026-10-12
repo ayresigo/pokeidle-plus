@@ -5,6 +5,8 @@ import type { ContainerOrchestrator } from "./orchestrator/types.js";
 import { SessionStore } from "./session/store.js";
 import { registerStreamRoutes } from "./stream/routes.js";
 import { Supervisor } from "./supervisor/supervisor.js";
+import { UpdateManager } from "./update/manager.js";
+import { registerUpdateRoutes } from "./update/routes.js";
 import { registerWorkerRoutes } from "./workers/routes.js";
 
 export interface BuildAppOpts {
@@ -15,21 +17,37 @@ export interface BuildAppOpts {
   gameUrl?: string;
   controlPlaneUrl?: string;
   supervisorPollMs?: number;
+  currentVersion?: string;
+  autoUpdate?: boolean;
+  updateCheckIntervalMs?: number;
 }
 
 export function buildApp(opts?: BuildAppOpts) {
   const app = Fastify();
 
+  const dataDir = opts?.dataDir ?? process.env.DATA_DIR ?? "/data";
   const centralApiUrl =
     opts?.centralApiUrl ?? process.env.CENTRAL_API_URL ?? "http://localhost:8080";
-  const sessionStore = new SessionStore(
-    opts?.dataDir ?? process.env.DATA_DIR ?? "/data",
-    centralApiUrl,
-  );
+  const workerImage =
+    opts?.workerImage ??
+    process.env.WORKER_IMAGE ??
+    "ghcr.io/multiacc-pokeidle/mpw-worker:stable";
+  const sessionStore = new SessionStore(dataDir, centralApiUrl);
   const orchestrator =
     opts?.orchestrator ??
     new DockerOrchestrator(undefined, process.env.WORKER_NETWORK || undefined);
   const supervisor = new Supervisor(orchestrator, opts?.supervisorPollMs);
+  const updateManager = new UpdateManager({
+    dataDir,
+    centralApiUrl,
+    sessionStore,
+    orchestrator,
+    supervisor,
+    workerImage,
+    currentVersion: opts?.currentVersion ?? process.env.CURRENT_VERSION ?? "dev",
+    autoUpdateEnv: opts?.autoUpdate ?? process.env.AUTO_UPDATE === "true",
+    checkIntervalMs: opts?.updateCheckIntervalMs,
+  });
 
   registerGuard(app, sessionStore);
   registerWorkerRoutes(app, {
@@ -37,10 +55,7 @@ export function buildApp(opts?: BuildAppOpts) {
     orchestrator,
     supervisor,
     centralApiUrl,
-    workerImage:
-      opts?.workerImage ??
-      process.env.WORKER_IMAGE ??
-      "ghcr.io/multiacc-pokeidle/mpw-worker:stable",
+    workerImage,
     gameUrl: opts?.gameUrl ?? process.env.GAME_URL ?? "https://poke.idleworld.online",
     controlPlaneUrl:
       opts?.controlPlaneUrl ??
@@ -48,12 +63,14 @@ export function buildApp(opts?: BuildAppOpts) {
       "http://host.docker.internal:4000",
   });
   registerStreamRoutes(app, { orchestrator, supervisor });
+  registerUpdateRoutes(app, { updateManager });
 
   app.addHook("onClose", async () => {
     supervisor.stop();
+    updateManager.stop();
   });
 
   app.get("/health", async () => ({ status: "ok" }));
 
-  return { app, sessionStore, supervisor };
+  return { app, sessionStore, supervisor, updateManager };
 }
