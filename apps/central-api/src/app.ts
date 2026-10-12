@@ -3,6 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { registerAuthRoutes } from "./auth/routes.js";
 import { registerAccountRoutes } from "./accounts/routes.js";
+import { registerRootRoute } from "./root/routes.js";
 import { registerReleaseRoutes } from "./releases/routes.js";
 import { registerUserRoutes } from "./users/routes.js";
 import { requireJwtSecret } from "./auth/service.js";
@@ -23,6 +24,8 @@ export function buildApp() {
   app.addHook("onClose", async () => {
     await prisma.$disconnect();
   });
+
+  registerRootRoute(app);
 
   app.get("/health", async () => ({ status: "ok" }));
 
