@@ -149,6 +149,8 @@ function criarSupervisorFake(
 
 interface StubRedeOpts {
   versao: string;
+  changelog?: string;
+  imageDigest?: string | null;
   sequenciaSaude?: Record<string, { state: string }[]>;
   statusCentral?: number;
 }
@@ -171,7 +173,11 @@ function stubFetchRede(eventos: string[], opcoes: StubRedeOpts): ChamadaRede[] {
           return new Response(JSON.stringify({ error: "x" }), { status: opcoes.statusCentral });
         }
         return new Response(
-          JSON.stringify({ version: opcoes.versao, imageDigest: null, changelog: "" }),
+          JSON.stringify({
+            version: opcoes.versao,
+            imageDigest: opcoes.imageDigest ?? null,
+            changelog: opcoes.changelog ?? "",
+          }),
           { status: 200 },
         );
       }
@@ -552,6 +558,76 @@ describe("UpdateManager", () => {
     expect(status.updateAvailable).toBe(false);
     expect(status.latestVersion).toBeNull();
     expect(status.lastError).toBeNull();
+  });
+
+  it("check guarda changelog e digest da release e expõe o changelog no status", async () => {
+    stubFetchRede(orchestrator.eventos, {
+      versao: "1.1.0",
+      changelog: "- corrige reconexão\n- novo painel",
+      imageDigest: DIGEST_NOVO,
+    });
+    const manager = criarManager(dir, orchestrator);
+
+    await manager.checkForUpdate();
+
+    const status = await manager.getStatus();
+    expect(status.latestVersion).toBe("1.1.0");
+    expect(status.latestChangelog).toBe("- corrige reconexão\n- novo painel");
+    expect(status.latestImageDigest).toBe(DIGEST_NOVO);
+  });
+
+  it("central sem release no canal (404) limpa changelog e digest anteriores", async () => {
+    stubFetchRede(orchestrator.eventos, { versao: "1.1.0", changelog: "notas", imageDigest: DIGEST_NOVO });
+    const manager = criarManager(dir, orchestrator);
+    await manager.checkForUpdate();
+
+    stubFetchRede(orchestrator.eventos, { versao: "1.1.0", statusCentral: 404 });
+    await manager.checkForUpdate();
+
+    const status = await manager.getStatus();
+    expect(status.latestChangelog).toBeNull();
+    expect(status.latestImageDigest).toBeNull();
+  });
+
+  it("status sem check nem rollback.json não tem changelog nem rollback", async () => {
+    const manager = criarManager(dir, orchestrator);
+
+    expect(await manager.getStatus()).toMatchObject({
+      latestChangelog: null,
+      latestImageDigest: null,
+      rollbackDisponivel: false,
+      rollbackVersao: null,
+    });
+  });
+
+  it("status expõe rollback disponível com a versão anterior do rollback.json", async () => {
+    await writeFile(
+      path.join(dir, "rollback.json"),
+      JSON.stringify({ versaoAnterior: "0.9.0", digestAnterior: DIGEST_ANTIGO, ts: new Date().toISOString() }),
+    );
+    const manager = criarManager(dir, orchestrator);
+
+    expect(await manager.getStatus()).toMatchObject({ rollbackDisponivel: true, rollbackVersao: "0.9.0" });
+  });
+
+  it("rollback.json ilegível não conta como rollback disponível", async () => {
+    await writeFile(path.join(dir, "rollback.json"), "{corrompido");
+    const manager = criarManager(dir, orchestrator);
+
+    expect(await manager.getStatus()).toMatchObject({ rollbackDisponivel: false, rollbackVersao: null });
+  });
+
+  it("após rollback bem-sucedido o status deixa de oferecer rollback", async () => {
+    await writeFile(
+      path.join(dir, "rollback.json"),
+      JSON.stringify({ versaoAnterior: "1.0.0", digestAnterior: DIGEST_ANTIGO, ts: new Date().toISOString() }),
+    );
+    stubFetchRede(orchestrator.eventos, { versao: "1.1.0" });
+    const manager = criarManager(dir, orchestrator);
+
+    expect(await manager.rollback()).toBe("ok");
+
+    expect(await manager.getStatus()).toMatchObject({ rollbackDisponivel: false, rollbackVersao: null });
   });
 
   it("falha de auth no check só registra lastError e nunca toca em workers", async () => {

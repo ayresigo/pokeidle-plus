@@ -20,11 +20,15 @@ export type UpdateState =
 export interface UpdateStatus {
   currentVersion: string;
   latestVersion: string | null;
+  latestChangelog: string | null;
+  latestImageDigest: string | null;
   updateAvailable: boolean;
   autoUpdate: boolean;
   lastCheck: string | null;
   lastError: string | null;
   state: UpdateState;
+  rollbackDisponivel: boolean;
+  rollbackVersao: string | null;
 }
 
 export type ResultadoApply = "ok" | "sem_atualizacao" | "ocupado" | "falhou";
@@ -71,6 +75,8 @@ function mensagemDeErro(err: unknown): string {
 export class UpdateManager {
   private state: UpdateState = "idle";
   private latestVersion: string | null = null;
+  private latestChangelog: string | null = null;
+  private latestImageDigest: string | null = null;
   private updateAvailable = false;
   private lastCheck: string | null = null;
   private lastError: string | null = null;
@@ -104,14 +110,19 @@ export class UpdateManager {
   }
 
   async getStatus(): Promise<UpdateStatus> {
+    const rollback = await this.lerRollback();
     return {
       currentVersion: this.opts.currentVersion,
       latestVersion: this.latestVersion,
+      latestChangelog: this.latestChangelog,
+      latestImageDigest: this.latestImageDigest,
       updateAvailable: this.updateAvailable,
       autoUpdate: await this.autoUpdateLigado(),
       lastCheck: this.lastCheck,
       lastError: this.lastError,
       state: this.state,
+      rollbackDisponivel: rollback !== null,
+      rollbackVersao: rollback?.versaoAnterior ?? null,
     };
   }
 
@@ -134,11 +145,19 @@ export class UpdateManager {
       );
       if (resposta.status === 404) {
         this.latestVersion = null;
+        this.latestChangelog = null;
+        this.latestImageDigest = null;
       } else if (!resposta.ok) {
         throw new Error(`central respondeu ${resposta.status} no /version`);
       } else {
-        const corpo = (await resposta.json()) as { version: string };
+        const corpo = (await resposta.json()) as {
+          version: string;
+          changelog?: string | null;
+          imageDigest?: string | null;
+        };
         this.latestVersion = corpo.version;
+        this.latestChangelog = corpo.changelog ?? null;
+        this.latestImageDigest = corpo.imageDigest ?? null;
       }
       this.updateAvailable =
         this.latestVersion !== null && this.latestVersion !== this.opts.currentVersion;
