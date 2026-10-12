@@ -40,7 +40,7 @@ Etapas concluídas:
 
 - [ ] **Phase 1: Validação com conta real** - Confirmar em sessão real os pontos de GAME.md §9 e ajustar o worker ao que for observado
 - [ ] **Phase 2: Autoplay** - Comportamento autônomo do bot e supervisão que sobrevive a reinícios, até a run de 24 h
-- [ ] **Phase 3: Página raiz da central** - `GET /` em pokeidle.ayresigo.dev responde algo útil em vez do 404
+- [x] **Phase 3: Página raiz da central** - `GET /` em pokeidle.ayresigo.dev responde algo útil em vez do 404 (completed 2026-10-12)
 
 ### Paralelismo e worktrees
 
@@ -94,7 +94,7 @@ Etapas concluídas:
 |-------|-----------|----------------|--------|-----------|
 | 1. Validação com conta real | v1.1 | 0/TBD | Not started | - |
 | 2. Autoplay | v1.1 | 0/TBD | Not started | - |
-| 3. Página raiz da central | v1.1 | 0/TBD | Not started | - |
+| 3. Página raiz da central | v1.1 | 1/1 | Complete    | 2026-10-12 |
 
 ## 📋 Backlog (sem fase atribuída)
 
