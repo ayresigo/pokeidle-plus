@@ -60,7 +60,12 @@ Etapas concluídas:
   3. Durante a sessão real, os logs do worker mostram `field-kill` reais e o contador de kills/capturas subindo, sem o watchdog de stall disparar.
   4. Depois de parar a conta pelo painel (drain), está registrado se o farm offline continua. Se só continua com `sleep-mode`, o drain passa a enviá-lo e o farm offline é confirmado de novo.
   5. Todo item de GAME.md §9 está marcado como confirmado, refutado ou não observável. Cada divergência virou correção no worker, com teste que reproduz o comportamento real e suíte verde.
-**Plans**: TBD
+**Plans**: 5 plans
+- [ ] 1-PLAN.md — Instrumentação de observabilidade de kills (não gated; pré-condição de VAL-04/SC3)
+- [ ] 2-PLAN.md — Smoke manual de auth/sessão (VAL-01, VAL-02, VAL-06 auth)
+- [ ] 3-PLAN.md — Smoke manual de game loop, kills, shard e drain (VAL-02..VAL-06)
+- [ ] 4-PLAN.md — Correções no worker gated por evidência (VAL-01..VAL-07)
+- [ ] 5-PLAN.md — Gate final: §9 marcado + suíte do worker verde (VAL-07)
 
 ### Phase 2: Autoplay
 **Goal**: As contas do jogador farmam sozinhas por 24 h: o bot caça, repõe pokébolas e consumíveis, vende loot, segue uma rotina e reage aos eventos do jogo, e a supervisão sobrevive a reinícios. As políticas concretas (hunt, compras, vendas, horários, eventos) são decididas com o usuário no `/gsd-discuss-phase 2`.
@@ -92,7 +97,7 @@ Etapas concluídas:
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Validação com conta real | v1.1 | 0/TBD | Not started | - |
+| 1. Validação com conta real | v1.1 | 0/5 | Not started | - |
 | 2. Autoplay | v1.1 | 0/TBD | Not started | - |
 | 3. Página raiz da central | v1.1 | 0/TBD | Not started | - |
 
