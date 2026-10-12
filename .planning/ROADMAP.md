@@ -40,7 +40,7 @@ Etapas concluídas:
 
 - [ ] **Phase 1: Validação com conta real** - Confirmar em sessão real os pontos de GAME.md §9 e ajustar o worker ao que for observado
 - [ ] **Phase 2: Autoplay** - Comportamento autônomo do bot e supervisão que sobrevive a reinícios, até a run de 24 h
-- [ ] **Phase 3: Página raiz da central** - `GET /` em pokeidle.ayresigo.dev responde algo útil em vez do 404
+- [x] **Phase 3: Página raiz da central** - `GET /` em pokeidle.ayresigo.dev responde algo útil em vez do 404 (completed 2026-10-12)
 
 ### Paralelismo e worktrees
 
@@ -99,7 +99,7 @@ Etapas concluídas:
 |-------|-----------|----------------|--------|-----------|
 | 1. Validação com conta real | v1.1 | 0/5 | Not started | - |
 | 2. Autoplay | v1.1 | 0/TBD | Not started | - |
-| 3. Página raiz da central | v1.1 | 0/TBD | Not started | - |
+| 3. Página raiz da central | v1.1 | 1/1 | Complete    | 2026-10-12 |
 
 ## 📋 Backlog (sem fase atribuída)
 
@@ -111,5 +111,6 @@ Concerns relevantes de `.planning/codebase/CONCERNS.md` que nenhuma das 3 fases 
 - **CEN-02 — Logger do Fastify:** `Fastify()` sem `logger` em `apps/central-api/src/app.ts` e `apps/control-plane/src/app.ts`. Todo `request.log.error` é descartado e erros 500 não deixam rastro.
 - **QA-01 — E2E fora do CI:** `e2e/smoke.spec.ts` só roda localmente; `ci.yml`/`release.yml` não o executam nem fazem typecheck de `e2e/`.
 - **QA-02 — Helpers de teste duplicados:** `fabricarJwt` em 9 arquivos do control-plane, `criarOrchestratorFake`/`workerRodando` em 4, `limparBanco`/`seedUser` em 5 da central.
+- **ACC-01 — Registrar conta do jogo do zero:** cadastro em `/register` + Cloudflare Turnstile + verificação de e-mail + criação de personagem, para o painel criar contas novas em vez de só adicionar existentes (gancho "criar do zero" previsto na UI da Phase 2, D-UI). Depende do veredito do solver Turnstile na Phase 1 (VAL-01). Origem: discussão da Phase 2 (`.planning/phases/02-autoplay/02-CONTEXT.md`, ideias adiadas).
 
 Os outros concerns (segurança do painel local e do `docker.sock`, semver das releases, recriação com env antigo, imagens de runtime inchadas, instrução `xargs docker rm` no README etc.) continuam em `.planning/codebase/CONCERNS.md`.

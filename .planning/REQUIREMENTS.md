@@ -56,9 +56,9 @@ Fonte: `.planning/codebase/CONCERNS.md` (Tech Debt "Estado desejado do superviso
 
 ### Página raiz da central (ROOT)
 
-- [ ] **ROOT-01**: `GET /` em `https://pokeidle.ayresigo.dev` devolve 200 com conteúdo útil (o que é o PokeIdle Plus e como instalar ou começar) em vez do 404 JSON padrão do Fastify. O formato (página HTML simples ou JSON informativo) é decidido no `/gsd-plan-phase 3`.
-- [ ] **ROOT-02**: A rota raiz é pública, não expõe dados de usuários, contas, releases internas nem segredos, e as rotas existentes (`/health`, `/auth/*`, `/accounts*`, `/version`, `/admin/*`) mantêm o comportamento, com os testes da central verdes.
-- [ ] **ROOT-03**: A nova versão da central está no ar no `tcgreaper`: release publicada, `newTag` atualizado em `k8s/base/kustomization.yaml` e `kubectl apply` feito pelo usuário ou com a confirmação explícita dele.
+- [x] **ROOT-01**: `GET /` em `https://pokeidle.ayresigo.dev` devolve 200 com conteúdo útil (o que é o PokeIdle Plus e como instalar ou começar) em vez do 404 JSON padrão do Fastify. O formato (página HTML simples ou JSON informativo) é decidido no `/gsd-plan-phase 3`.
+- [x] **ROOT-02**: A rota raiz é pública, não expõe dados de usuários, contas, releases internas nem segredos, e as rotas existentes (`/health`, `/auth/*`, `/accounts*`, `/version`, `/admin/*`) mantêm o comportamento, com os testes da central verdes.
+- [x] **ROOT-03**: A nova versão da central está no ar no `tcgreaper`: release publicada, `newTag` atualizado em `k8s/base/kustomization.yaml` e `kubectl apply` feito pelo usuário ou com a confirmação explícita dele.
 
 ## v2 Requirements (backlog)
 
@@ -109,9 +109,9 @@ Reconhecidos, fora do roadmap do v1.1. Ver a seção Backlog do ROADMAP e `.plan
 | AUTO-06 | Phase 2 | Pending |
 | SUP-01 | Phase 2 | Pending |
 | SUP-02 | Phase 2 | Pending |
-| ROOT-01 | Phase 3 | Pending |
-| ROOT-02 | Phase 3 | Pending |
-| ROOT-03 | Phase 3 | Pending |
+| ROOT-01 | Phase 3 | Complete |
+| ROOT-02 | Phase 3 | Complete |
+| ROOT-03 | Phase 3 | Complete |
 
 **Coverage:**
 - v1.1 requirements: 18 total
