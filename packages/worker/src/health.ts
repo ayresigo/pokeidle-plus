@@ -13,6 +13,8 @@ export interface HealthSnapshot {
   lastAction: string | null;
   lastError: string | null;
   uptimeSec: number;
+  kills: number;
+  capturas: number;
   tokens?: Tokens;
 }
 
@@ -20,6 +22,8 @@ export class HealthState {
   private state: WorkerState = "booting";
   private lastAction: string | null = null;
   private lastError: string | null = null;
+  private kills = 0;
+  private capturas = 0;
   private tokens: Tokens | null;
   private readonly startedAt: number;
 
@@ -47,6 +51,11 @@ export class HealthState {
     this.tokens = { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken };
   }
 
+  setContadores(contadores: { kills: number; capturas: number }): void {
+    this.kills = contadores.kills;
+    this.capturas = contadores.capturas;
+  }
+
   private renewedTokens(): Tokens | null {
     if (!this.tokens) return null;
     const initial = this.initialTokens;
@@ -66,6 +75,8 @@ export class HealthState {
       lastAction: this.lastAction,
       lastError: this.lastError,
       uptimeSec: Math.floor((this.now() - this.startedAt) / 1000),
+      kills: this.kills,
+      capturas: this.capturas,
     };
     const tokens = this.renewedTokens();
     if (tokens) snapshot.tokens = tokens;

@@ -66,6 +66,7 @@ export interface OpcoesClient {
   wsUrl: string;
   shards: number;
   gameUrl: string;
+  accountId: string;
   auth: AuthJogo;
   health: HealthState;
   fetch: HttpFetch;
@@ -545,9 +546,17 @@ export class GameClient implements ClienteJogo {
         e.ultimoKill = typeof m.speciesName === "string" ? m.speciesName : null;
         e.kills += 1;
         this.reciclagens = 0;
+        console.log(
+          `worker ${this.opcoes.accountId}: field-kill${e.ultimoKill ? ` ${e.ultimoKill}` : ""} (kills ${e.kills})`,
+        );
+        this.opcoes.health.setContadores({ kills: e.kills, capturas: e.capturas });
         return;
       case "catch-result":
-        if (m.success === true) e.capturas += 1;
+        if (m.success === true) {
+          e.capturas += 1;
+          console.log(`worker ${this.opcoes.accountId}: captura (capturas ${e.capturas})`);
+          this.opcoes.health.setContadores({ kills: e.kills, capturas: e.capturas });
+        }
         return;
       case "balls":
         if (typeof m.counts !== "object" || m.counts === null) return;
@@ -603,6 +612,7 @@ export function criarGameClient(
     wsUrl: config.gameWsUrl,
     shards: config.gameWsShards,
     gameUrl: config.gameUrl,
+    accountId: config.accountId,
     auth,
     health,
     fetch: criarFetch(config.proxyUrl),

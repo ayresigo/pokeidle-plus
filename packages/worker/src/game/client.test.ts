@@ -96,6 +96,7 @@ function novoCliente(extra: Partial<OpcoesClient> = {}): GameClient {
     wsUrl: extra.wsUrl ?? servidor.wsUrl,
     shards: 1,
     gameUrl: "http://jogo.example",
+    accountId: "conta-teste",
     auth,
     health,
     fetch: fetchJogo,
@@ -216,6 +217,27 @@ describe("GameClient: conexão", () => {
 
     servidor.emitir(conexao, { type: "field-none" });
     await vi.waitFor(() => expect(c.estado.huntAtual).toBeNull());
+  });
+
+  it("field-kill e captura logam sem segredo e publicam contadores no /health", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const c = novoCliente();
+    c.conectar();
+    const conexao = await servidor.conexao(0);
+
+    servidor.emitir(conexao, { type: "field-kill", speciesName: "Caterpie" });
+    servidor.emitir(conexao, { type: "field-kill", speciesName: "Weedle" });
+    servidor.emitir(conexao, { type: "catch-result", success: true, speciesName: "Caterpie" });
+    servidor.emitir(conexao, { type: "catch-result", success: false, speciesName: "Weedle" });
+
+    await vi.waitFor(() => expect(health.snapshot().kills).toBe(2));
+    expect(health.snapshot().capturas).toBe(1);
+
+    const linhas = log.mock.calls.map((chamada) => String(chamada[0]));
+    expect(linhas.some((linha) => linha.includes("field-kill"))).toBe(true);
+    expect(linhas.some((linha) => linha.includes("captura"))).toBe(true);
+    expect(linhas.join("\n")).not.toContain(accessInicial);
+    log.mockRestore();
   });
 
   it("restart-freeze sem boosts ativos é ignorado como no cliente oficial", async () => {
@@ -490,6 +512,7 @@ describe("GameClient: política de reconexão (fake timers)", () => {
       wsUrl: "ws://jogo.example/ws",
       shards: 1,
       gameUrl: "http://jogo.example",
+      accountId: "conta-teste",
       auth,
       health,
       fetch: fetchJogo,
