@@ -34,8 +34,13 @@ export function buildApp(opts?: BuildAppOpts) {
     opts?.centralApiUrl ?? process.env.CENTRAL_API_URL ?? "http://localhost:8080";
   const imageRegistry =
     opts?.imageRegistry ?? (process.env.IMAGE_REGISTRY || "ghcr.io/ayresigo");
+  const currentVersion =
+    opts?.currentVersion ??
+    (process.env.CURRENT_VERSION || process.env.APP_VERSION || "dev");
   const workerImage =
-    opts?.workerImage ?? (process.env.WORKER_IMAGE || `${imageRegistry}/mpw-worker:stable`);
+    opts?.workerImage ??
+    (process.env.WORKER_IMAGE ||
+      `${imageRegistry}/mpw-worker:${currentVersion === "dev" ? "stable" : currentVersion}`);
   const sessionStore = new SessionStore(dataDir, centralApiUrl);
   const orchestrator =
     opts?.orchestrator ??
@@ -49,9 +54,7 @@ export function buildApp(opts?: BuildAppOpts) {
     supervisor,
     workerImage,
     updaterImage: `${imageRegistry}/mpw-updater`,
-    currentVersion:
-      opts?.currentVersion ??
-      (process.env.CURRENT_VERSION || process.env.APP_VERSION || "dev"),
+    currentVersion,
     autoUpdateEnv: opts?.autoUpdate ?? process.env.AUTO_UPDATE === "true",
     checkIntervalMs: opts?.updateCheckIntervalMs,
   });

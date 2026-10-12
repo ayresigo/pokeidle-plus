@@ -19,7 +19,6 @@ services:
     environment:
       CENTRAL_API_URL: ${CENTRAL_API_URL:?defina CENTRAL_API_URL no .env}
       IMAGE_REGISTRY: ${IMAGE_REGISTRY:-ghcr.io/ayresigo}
-      WORKER_IMAGE: ${IMAGE_REGISTRY:-ghcr.io/ayresigo}/mpw-worker:${MPW_TAG:-stable}
       AUTO_UPDATE: ${AUTO_UPDATE:-true}
       WORKER_NETWORK: mpw
       CONTROL_PLANE_URL: http://control-plane:4000

@@ -75,4 +75,34 @@ describe("buildApp", () => {
     expect(interno.repoUpdater).toBe("registry.local/eu/mpw-updater");
     await app.close();
   });
+
+  async function imagemDoWorker(): Promise<string> {
+    const dataDir = await mkdtemp(path.join(tmpdir(), "app-test-"));
+    const { app, updateManager } = buildApp({ dataDir, orchestrator: orchestratorFake() });
+    const interno = updateManager as unknown as { opts: { workerImage: string } };
+    await app.close();
+    return interno.opts.workerImage;
+  }
+
+  it("sem WORKER_IMAGE usa o worker da mesma versão do control-plane", async () => {
+    vi.stubEnv("IMAGE_REGISTRY", "registry.local/eu");
+    vi.stubEnv("WORKER_IMAGE", "");
+    vi.stubEnv("CURRENT_VERSION", "");
+    vi.stubEnv("APP_VERSION", "1.3.0");
+    expect(await imagemDoWorker()).toBe("registry.local/eu/mpw-worker:1.3.0");
+  });
+
+  it("sem WORKER_IMAGE em dev usa o worker :stable", async () => {
+    vi.stubEnv("IMAGE_REGISTRY", "registry.local/eu");
+    vi.stubEnv("WORKER_IMAGE", "");
+    vi.stubEnv("CURRENT_VERSION", "");
+    vi.stubEnv("APP_VERSION", "");
+    expect(await imagemDoWorker()).toBe("registry.local/eu/mpw-worker:stable");
+  });
+
+  it("WORKER_IMAGE explícita tem precedência", async () => {
+    vi.stubEnv("WORKER_IMAGE", "meu/worker:x");
+    vi.stubEnv("APP_VERSION", "1.3.0");
+    expect(await imagemDoWorker()).toBe("meu/worker:x");
+  });
 });
