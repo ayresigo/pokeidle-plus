@@ -106,5 +106,6 @@ Concerns relevantes de `.planning/codebase/CONCERNS.md` que nenhuma das 3 fases 
 - **CEN-02 — Logger do Fastify:** `Fastify()` sem `logger` em `apps/central-api/src/app.ts` e `apps/control-plane/src/app.ts`. Todo `request.log.error` é descartado e erros 500 não deixam rastro.
 - **QA-01 — E2E fora do CI:** `e2e/smoke.spec.ts` só roda localmente; `ci.yml`/`release.yml` não o executam nem fazem typecheck de `e2e/`.
 - **QA-02 — Helpers de teste duplicados:** `fabricarJwt` em 9 arquivos do control-plane, `criarOrchestratorFake`/`workerRodando` em 4, `limparBanco`/`seedUser` em 5 da central.
+- **ACC-01 — Registrar conta do jogo do zero:** cadastro em `/register` + Cloudflare Turnstile + verificação de e-mail + criação de personagem, para o painel criar contas novas em vez de só adicionar existentes (gancho "criar do zero" previsto na UI da Phase 2, D-UI). Depende do veredito do solver Turnstile na Phase 1 (VAL-01). Origem: discussão da Phase 2 (`.planning/phases/02-autoplay/02-CONTEXT.md`, ideias adiadas).
 
 Os outros concerns (segurança do painel local e do `docker.sock`, semver das releases, recriação com env antigo, imagens de runtime inchadas, instrução `xargs docker rm` no README etc.) continuam em `.planning/codebase/CONCERNS.md`.
