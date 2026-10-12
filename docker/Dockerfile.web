@@ -1,0 +1,22 @@
+FROM node:22-slim AS deps
+RUN corepack enable
+WORKDIR /app
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml .npmrc tsconfig.base.json ./
+COPY apps/web/package.json apps/web/
+RUN pnpm install --frozen-lockfile
+
+FROM deps AS build
+ENV NEXT_TELEMETRY_DISABLED=1
+COPY apps/web apps/web
+RUN mkdir -p apps/web/public && pnpm --filter web build
+
+FROM node:22-slim AS runtime
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=3000
+WORKDIR /app
+COPY --from=build /app/apps/web/.next/standalone ./
+COPY --from=build /app/apps/web/.next/static apps/web/.next/static
+COPY --from=build /app/apps/web/public apps/web/public
+ARG VERSION=dev
+ENV APP_VERSION=$VERSION
+EXPOSE 3000
+CMD ["node", "apps/web/server.js"]

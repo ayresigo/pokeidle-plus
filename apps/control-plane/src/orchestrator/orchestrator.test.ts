@@ -78,6 +78,27 @@ describe.skipIf(!dockerDisponivel)("DockerOrchestrator", () => {
   );
 
   it(
+    "createWorker baixa a imagem quando ela não existe localmente",
+    async () => {
+      const imagemAusente = "hello-world:latest";
+      await docker
+        .getImage(imagemAusente)
+        .remove({ force: true })
+        .catch(() => {});
+      const id = await orchestrator.createWorker({
+        accountId: accountId(),
+        imageRef: imagemAusente,
+        env: {},
+      });
+      criados.push(id);
+
+      const inspecao = await docker.getContainer(id).inspect();
+      expect(inspecao.Config.Image).toBe(imagemAusente);
+    },
+    180_000,
+  );
+
+  it(
     "listWorkers filtra por label mpw.managed",
     async () => {
       const conta = accountId();

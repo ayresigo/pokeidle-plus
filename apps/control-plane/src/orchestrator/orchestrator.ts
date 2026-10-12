@@ -52,7 +52,7 @@ export class DockerOrchestrator implements ContainerOrchestrator {
       );
     }
 
-    const container = await this.docker.createContainer({
+    const opcoes: Docker.ContainerCreateOptions = {
       name: nome,
       Image: cfg.imageRef,
       Cmd: cfg.cmd,
@@ -66,7 +66,14 @@ export class DockerOrchestrator implements ContainerOrchestrator {
         AutoRemove: false,
         ...(this.network ? { NetworkMode: this.network } : {}),
       },
-    });
+    };
+    const container = await this.docker
+      .createContainer(opcoes)
+      .catch(async (erro: { statusCode?: number }) => {
+        if (erro.statusCode !== 404) throw erro;
+        await this.pullImage(cfg.imageRef);
+        return this.docker.createContainer(opcoes);
+      });
     return container.id;
   }
 
