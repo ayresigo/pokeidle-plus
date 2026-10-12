@@ -1,0 +1,41 @@
+{
+  "source_path": "D:/repos/multiacc-pokeidle/packages/worker/GAME.md",
+  "type": "SPEC",
+  "confidence": "high",
+  "manifest_override": true,
+  "title": "GAME.md — Pesquisa PokeIdle (referência para o módulo `game/`)",
+  "summary": "Research reference for the worker game loop: Poke Idle World target, login/Turnstile flow, REST endpoints, sharded WebSocket protocol and close codes, idle loop, anti-bot constraints, and manual verification points.",
+  "scope": [
+    "Poke Idle World (poke.idleworld.online)",
+    "worker game module (packages/worker game/)",
+    "login flow (/api/auth/login, 2FA, refresh)",
+    "Cloudflare Turnstile captcha and solver",
+    "session tokens (sessionStorage pokeweb:tokens, Bearer auth)",
+    "DOM selectors (auth and /play overlays)",
+    "REST endpoints (/api/characters/me, /api/game/balls/buy, /api/game/depot, /api/game/map-markers, /api/game/shop/sell, /api/game/flint/sell)",
+    "game WebSocket protocol (/ws sharding via djb2 of JWT sub, 88 shards, heartbeat, reconnect backoff)",
+    "WS close codes (4001-4009)",
+    "WS message types (enter-hunt, leave-hunt, set-city, restart-state, restart-resume, balls-get, field-init, field-kill, hunt-resume, restart-freeze)",
+    "idle loop (hunt, capture, heal, restock, sell, offline sleep mode)",
+    "anti-bot rules (4-account limit, one session per account, anti-automation rules)",
+    "worker env overrides (GAME_URL, GAME_WS_URL, GAME_WS_PATH, GAME_WS_SHARDS, HUNT_SLUG, TURNSTILE_SITEKEY)",
+    "worker reconnect, recycle and stall-watchdog policies",
+    "Task 19 (auth) and Task 20 (game loop)"
+  ],
+  "cross_refs": [
+    "https://poke.idleworld.online/",
+    "https://poke.idleworld.online/rules",
+    "https://poke.idleworld.online/login",
+    "https://poke.idleworld.online/register",
+    "https://pokeidle.net/README.md",
+    "https://github.com/Phoslead/pokeidle_bettermap/blob/main/pokeidle_bettermap.user.js",
+    "https://github.com/soufoka/PokeGrid-source/blob/main/main.js",
+    "https://github.com/soufoka/PokeGrid-source/blob/main/index.html",
+    "https://github.com/soufoka/PokeGrid-source/blob/main/FAQ.md",
+    "https://poke.idleworld.online/_next/static/chunks/0ar1xg2adjvm_.js",
+    "https://poke.idleworld.online/_next/static/chunks/3aqjofv7-1o3x.js"
+  ],
+  "locked": false,
+  "precedence": 1,
+  "notes": "Type set by manifest (SPEC, precedence 1). Content is a research reference with protocol/endpoint contracts plus worker policy decisions (sections 9.1/9.2: reconnect, recycle, stall watchdog, close-code handling) and an explicit Unknowns section; several items marked [INFERENCE] or pending manual confirmation with a real account."
+}

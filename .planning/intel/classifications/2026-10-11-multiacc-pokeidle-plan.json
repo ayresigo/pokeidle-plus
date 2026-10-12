@@ -1,0 +1,33 @@
+{
+  "source_path": "D:/repos/multiacc-pokeidle/docs/plans/2026-10-11-multiacc-pokeidle-plan.md",
+  "type": "DOC",
+  "confidence": "high",
+  "manifest_override": true,
+  "title": "Multiacc PokeIdle — Implementation Plan",
+  "summary": "Task-by-task TDD implementation plan (phases 0-6) for the pnpm monorepo: central-api, control-plane, Node WS/REST worker, Next.js web UI, packaging/release to GHCR, and E2E smoke.",
+  "scope": [
+    "pnpm monorepo scaffold",
+    "apps/central-api (Fastify + Prisma + PostgreSQL)",
+    "apps/control-plane (Fastify + dockerode)",
+    "packages/worker (Node WS/REST bot, no Chromium)",
+    "TokenProvider (StoredTokenProvider, SolverTokenProvider, Turnstile 2captcha-compatible solver)",
+    "token refresh and needs-login state",
+    "PROXY_URL proxy support",
+    "Socket.IO game client and game loop",
+    "apps/web (Next.js + Tailwind)",
+    "packages/shared (types/contracts)",
+    "docker-compose distributed setup",
+    "GHCR image publishing and release",
+    "E2E smoke tests",
+    "task ordering and dependencies"
+  ],
+  "cross_refs": [
+    "docs/plans/2026-10-11-multiacc-pokeidle-design.md",
+    "packages/worker/GAME.md",
+    "GAME.md",
+    "AGENTS.md"
+  ],
+  "locked": false,
+  "precedence": 2,
+  "notes": "Manifest declared DOC. Content is an implementation plan (tasks/steps/commits), not a PRD/SPEC/ADR. Contains one embedded post-research decision (Fase 3: worker is pure Node WS/REST without Chromium; TokenProvider with Turnstile solver primary and pasted token fallback) and stack choices (Next.js 15 stated, repo context says Next.js 16) the synthesizer may want to reconcile against higher-precedence sources."
+}

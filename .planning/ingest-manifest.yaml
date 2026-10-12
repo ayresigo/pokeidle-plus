@@ -1,0 +1,13 @@
+docs:
+  - path: docs/plans/2026-10-11-multiacc-pokeidle-design.md
+    type: SPEC
+    precedence: 0
+  - path: packages/worker/GAME.md
+    type: SPEC
+    precedence: 1
+  - path: docs/plans/2026-10-11-multiacc-pokeidle-plan.md
+    type: DOC
+    precedence: 2
+  - path: README.md
+    type: DOC
+    precedence: 3

@@ -1,0 +1,37 @@
+{
+  "source_path": "D:/repos/multiacc-pokeidle/README.md",
+  "type": "DOC",
+  "confidence": "high",
+  "manifest_override": true,
+  "title": "Multiacc PokeIdle",
+  "summary": "User and admin guide for running multiple PokeIdle accounts in Docker containers via a local web panel, plus central deployment, release publishing and E2E runs.",
+  "scope": [
+    "docker-compose user install (mpw-web, control-plane, worker, updater)",
+    "local web panel on 127.0.0.1:3000 and ALLOWED_HOSTS",
+    "game account registration, proxy test and pokeweb:tokens needs-login flow",
+    "auto-update, MPW_TAG pinning and rollback",
+    "stopping and removing managed worker containers (label mpw.managed=true, volume mpw_mpw-data)",
+    "central-api on Kubernetes cluster tcgreaper, namespace pokeidle (k8s/base Kustomize, Traefik, cert-manager, NetworkPolicy, pg_dump backup CronJob)",
+    "central-api on VPS via docker-compose.central.yml with reverse proxy (Caddy/nginx)",
+    "admin user management (create, deactivate, reset password, role change, ci-release admin)",
+    "release workflow release.yml and ci.yml publishing ghcr.io/ayresigo/mpw-* images to stable/beta channels",
+    "Playwright E2E smoke with fake-game (e2e/docker-compose.e2e.yml, project mpw-e2e)"
+  ],
+  "cross_refs": [
+    "docker-compose.yml",
+    ".env.example",
+    ".env",
+    "k8s/base",
+    "k8s/base/secrets.example.yaml",
+    "k8s/base/kustomization.yaml",
+    "docker-compose.central.yml",
+    ".github/workflows/release.yml",
+    ".github/workflows/ci.yml",
+    "e2e/docker-compose.e2e.yml",
+    "e2e/fake-game",
+    "e2e/fake-game/token.ts"
+  ],
+  "locked": false,
+  "precedence": 3,
+  "notes": ""
+}

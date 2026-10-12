@@ -1,0 +1,30 @@
+{
+  "source_path": "D:/repos/multiacc-pokeidle/docs/plans/2026-10-11-multiacc-pokeidle-design.md",
+  "type": "SPEC",
+  "confidence": "high",
+  "manifest_override": true,
+  "title": "Multiacc PokeIdle — Design",
+  "summary": "Approved architecture design for running multiple PokeIdle accounts in Docker workers, orchestrated by a local control-plane and Next.js UI against a central Fastify+Postgres API.",
+  "scope": [
+    "Central API (Fastify + PostgreSQL, Prisma)",
+    "JWT auth (access 15min, refresh 30d, 7-day offline grace)",
+    "AES-256-GCM encryption of PokeIdle credentials and tokens",
+    "Next.js UI (login, accounts dashboard, account form, updates)",
+    "control-plane (Fastify + dockerode)",
+    "worker (node:22-slim, WS/REST client, no browser)",
+    "TokenProvider login strategy (Turnstile solver primary, pasted token fallback)",
+    "dynamic worker orchestration (mpw-worker-<accountId>, exponential backoff 1m-15m)",
+    "per-account optional proxy",
+    "update flow (GET /version every 6h, rolling recreate, ephemeral updater, :stable tag, digest rollback)",
+    "central data model (users, refresh_tokens, accounts, releases)",
+    "error handling by design",
+    "Vitest testing strategy (unit, integration with DinD, E2E smoke with mpw-worker-mock)",
+    "risks (Turnstile solver, game protocol, VPS dependency, PokeIdle ToS)"
+  ],
+  "cross_refs": [
+    "packages/worker/GAME.md"
+  ],
+  "locked": false,
+  "precedence": 0,
+  "notes": ""
+}
