@@ -29,3 +29,9 @@ export async function requireAuth(request: FastifyRequest, reply: FastifyReply):
     return reply.code(401).send({ error: "não autenticado" });
   }
 }
+
+export async function requireAdmin(request: FastifyRequest, reply: FastifyReply): Promise<unknown> {
+  if (request.userRole !== "admin") {
+    return reply.code(403).send({ error: "acesso restrito a administradores" });
+  }
+}

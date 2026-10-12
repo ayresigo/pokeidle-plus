@@ -1,6 +1,6 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance } from "fastify";
 import type { PrismaClient, Release } from "@prisma/client";
-import { requireAuth } from "../auth/guard.js";
+import { requireAdmin, requireAuth } from "../auth/guard.js";
 
 const REGEX_SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
@@ -44,12 +44,6 @@ function publico(release: Release) {
     changelog: release.changelog,
     publishedAt: release.publishedAt,
   };
-}
-
-async function requireAdmin(request: FastifyRequest, reply: FastifyReply): Promise<unknown> {
-  if (request.userRole !== "admin") {
-    return reply.code(403).send({ error: "acesso restrito a administradores" });
-  }
 }
 
 export function registerReleaseRoutes(app: FastifyInstance, prisma: PrismaClient): void {

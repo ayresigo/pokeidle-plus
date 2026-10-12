@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { PrismaClient } from "@prisma/client";
+import { requireAuth } from "./guard.js";
 import { login, logout, refresh } from "./service.js";
 
 const ERRO_CREDENCIAIS = { error: "credenciais inválidas" };
@@ -55,5 +56,13 @@ export function registerAuthRoutes(app: FastifyInstance, prisma: PrismaClient): 
   app.post<{ Body: RefreshBody }>("/auth/logout", { schema: schemaRefresh }, async (request, reply) => {
     await logout(prisma, request.body.refreshToken);
     return reply.code(204).send();
+  });
+
+  app.get("/auth/me", { preHandler: requireAuth }, async (request, reply) => {
+    const user = await prisma.user.findUnique({ where: { id: request.userId } });
+    if (!user || !user.active) {
+      return reply.code(401).send({ error: "não autenticado" });
+    }
+    return reply.send({ id: user.id, username: user.username, role: user.role });
   });
 }
