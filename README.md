@@ -10,14 +10,14 @@ Roda várias contas do PokeIdle no seu PC, cada uma num container próprio, cont
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) instalado e aberto (no Windows, com WSL 2).
 - Usuário e senha da central, fornecidos pelo admin.
-- O endereço da central (`CENTRAL_API_URL`), também passado pelo admin.
+- O endereço da central já vem preenchido no `.env.example` (`https://pokeidle.ayresigo.dev`).
 
 As imagens ficam no GitHub Container Registry (`ghcr.io`) e são públicas: não precisa de `docker login`.
 
 ### Instalar e subir
 
 1. Baixe este repositório (ou só os arquivos `docker-compose.yml` e `.env.example`) para uma pasta.
-2. Copie `.env.example` para `.env` e preencha `CENTRAL_API_URL` com o endereço que o admin passou. O resto pode ficar como está.
+2. Copie `.env.example` para `.env`. Não precisa mudar nada.
 3. Na pasta, rode:
 
    ```sh
@@ -74,7 +74,16 @@ Se a conta aparecer como **precisa de login**, cole os tokens do jogo:
 
 - Seus dados ficam no volume `mpw_mpw-data`. Não use `docker compose down -v`, a menos que queira perder a sessão salva.
 
-## Para o admin: central na VPS
+## Para o admin: central no Kubernetes (tcgreaper)
+
+A central oficial roda no cluster `tcgreaper`, namespace `pokeidle`, em `https://pokeidle.ayresigo.dev`. Os manifests ficam em `k8s/base` (Kustomize): Deployment + Service + Ingress (Traefik, TLS via cert-manager `letsencrypt-prod`), NetworkPolicy e um CronJob de backup diário próprio (`pg_dump` do banco `pokeidle`, 14 dias de retenção, PVC `pokeidle-backup-pvc`).
+
+- Banco: database `pokeidle` com role própria `pokeidle` (sem superusuário) no Postgres compartilhado `postgres.tcgtracker.svc.cluster.local`.
+- Segredos: o Secret `pokeidle-secrets` é criado à mão a partir de `k8s/base/secrets.example.yaml` e nunca é commitado.
+- Versão: `newTag` em `k8s/base/kustomization.yaml`; aplique com `kubectl --context tcgreaper apply -k k8s/base`.
+- A imagem roda `prisma migrate deploy` e o seed do admin a cada start (idempotente).
+
+## Para o admin: central numa VPS (alternativa)
 
 A central (`mpw-central-api` + Postgres) guarda usuários, contas e releases. Use o `docker-compose.central.yml` como referência:
 
@@ -123,7 +132,7 @@ O workflow `.github/workflows/release.yml` roda a cada tag `v*`: testa tudo, ger
 - O repositório no GitHub em `ayresigo/pokeidle-plus` (as imagens vão para `ghcr.io/ayresigo`).
 - Em **Settings → Secrets and variables → Actions**:
   - secrets `CENTRAL_ADMIN_USERNAME` e `CENTRAL_ADMIN_PASSWORD`: o admin dedicado `ci-release` (veja [Cadastrar amigos](#cadastrar-amigos));
-  - variable `CENTRAL_API_URL`: a URL HTTPS pública da central (ex.: `https://mpw.exemplo.com`).
+  - variable `CENTRAL_API_URL`: `https://pokeidle.ayresigo.dev`.
 - Depois da primeira release, torne os 5 pacotes públicos: em https://github.com/ayresigo?tab=packages abra cada `mpw-*` → **Package settings** → **Change visibility** → **Public**. Enquanto estiverem privados, os amigos não conseguem baixar as imagens.
 
 ### Publicar
