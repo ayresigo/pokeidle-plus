@@ -97,7 +97,7 @@ Etapas concluídas:
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Validação com conta real | v1.1 | 0/5 | Not started | - |
+| 1. Validação com conta real | v1.1 | 0/6 | Not started | - |
 | 2. Autoplay | v1.1 | 0/TBD | Not started | - |
 | 3. Página raiz da central | v1.1 | 1/1 | Complete    | 2026-10-12 |
 

@@ -124,6 +124,16 @@ Fora do escopo (fixado pelo roadmap / decisões, não se discute aqui):
 - Capturar as mensagens WS cruas (formato de `field-kill`/`catch-result`/`analyzer`) é
   evidência direta para VAL-04 e para o formato dos eventos de §9.2.
 
+## Observações read-only para a Fase 2 (autoplay)
+A discussão da Fase 2 (`.planning/phases/02-autoplay/02-CONTEXT.md`, integrada da main) deixou
+pontos "(condicional à Fase 1)" que são observação pura de protocolo e cabem na MESMA sessão de
+smoke, sem o worker comprar/vender/curar nem gastar gold. Cobertos pelo `6-PLAN.md`:
+- Fonte dos campos do dashboard via `GET /api/characters/me` (02-CONTEXT D-20).
+- Formato cru de `analyzer`/`balls`/`pokes`/`poke-xp` para os cards de sessão (D-19/D-23) e critério de pokémon fraco/duplicado (D-11).
+- Mecanismo de cura em `field-teleport-city` e endpoints de compra de potion / venda de pokémon — **só mapear** (D-07/D-11/D-14).
+- Catálogos estáticos `items.json` (`npcPrice`) e `creatures.json` para whitelist de venda (D-08) e hunt otimizada (D-01).
+Limite duro: nenhuma ação paga na conta real nesta fase; o que exigir gasto fica marcado não-observável e vai para a Fase 2.
+
 ## Deferred Ideas
 - Políticas de hunt/compra/venda, rotina diária, Modo Soneca como comportamento autônomo:
   **Phase 2 (AUTO-*)**. Aqui só observamos o `sleep-mode` o suficiente para VAL-05.
