@@ -18,11 +18,25 @@ type CallbackTokensRenovados = (
 
 export type DesiredState = "running" | "stopped";
 
+export interface EstadoJogo {
+  state: string;
+  lastAction: string | null;
+  lastError: string | null;
+}
+
 export interface WorkerSnapshot extends WorkerStatus {
   desired: DesiredState | "none";
   backoffAtual: number;
   degraded: boolean;
   lastError: string | null;
+  jogo: EstadoJogo | null;
+}
+
+interface CorpoHealth {
+  state?: unknown;
+  lastAction?: unknown;
+  lastError?: unknown;
+  tokens?: Partial<TokensRenovados>;
 }
 
 const PASSOS_BACKOFF = [60_000, 120_000, 300_000];
@@ -54,6 +68,7 @@ export class Supervisor {
   private estados = new Map<string, EstadoSupervisao>();
   private ultimaLista: WorkerStatus[] = [];
   private ultimosTokens = new Map<string, TokensRenovados>();
+  private jogos = new Map<string, EstadoJogo>();
   private tokensObservados = new Map<string, TokensRenovados>();
   private recriacoesPendentes = new Map<string, RecriacaoPendente>();
   private pausados = new Set<string>();
@@ -132,6 +147,7 @@ export class Supervisor {
         backoffAtual: calcularBackoff(estado?.falhas ?? 0),
         degraded: (estado?.falhas ?? 0) >= FALHAS_PARA_DEGRADED,
         lastError: estado?.lastError ?? null,
+        jogo: this.jogos.get(worker.accountId) ?? null,
       };
     });
   }
@@ -184,13 +200,21 @@ export class Supervisor {
           }
         }
       }
-      if (this.onTokensRenovados) {
-        for (const worker of this.ultimaLista) {
-          if (worker.state === "running") {
-            await this.verificarTokens(worker.accountId);
-          }
+      const jogos = new Map<string, EstadoJogo>();
+      for (const worker of this.ultimaLista) {
+        if (worker.state !== "running") continue;
+        const corpo = await this.lerHealth(worker.accountId);
+        if (!corpo) continue;
+        if (typeof corpo.state === "string") {
+          jogos.set(worker.accountId, {
+            state: corpo.state,
+            lastAction: typeof corpo.lastAction === "string" ? corpo.lastAction : null,
+            lastError: typeof corpo.lastError === "string" ? corpo.lastError : null,
+          });
         }
+        await this.verificarTokens(worker.accountId, corpo.tokens);
       }
+      this.jogos = jogos;
       const snapshot = this.getSnapshot();
       const serial = JSON.stringify(snapshot);
       if (serial !== this.ultimoSnapshotSerial) {
@@ -236,34 +260,37 @@ export class Supervisor {
     this.recriacoesPendentes.delete(accountId);
   }
 
-  private async verificarTokens(accountId: string): Promise<void> {
-    let corpo: { tokens?: TokensRenovados };
+  private async lerHealth(accountId: string): Promise<CorpoHealth | null> {
     try {
       const resposta = await fetch(`http://mpw-worker-${accountId}:3001/health`);
-      if (!resposta.ok) return;
-      corpo = (await resposta.json()) as { tokens?: TokensRenovados };
+      if (!resposta.ok) return null;
+      return (await resposta.json()) as CorpoHealth;
     } catch {
-      return;
+      return null;
     }
-    const tokens = corpo.tokens;
+  }
+
+  private async verificarTokens(
+    accountId: string,
+    tokens: Partial<TokensRenovados> | undefined,
+  ): Promise<void> {
+    if (!this.onTokensRenovados) return;
     if (!tokens?.accessToken || !tokens.refreshToken) return;
-    this.tokensObservados.set(accountId, {
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-    });
+    const novos = { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken };
+    this.tokensObservados.set(accountId, novos);
     const anterior = this.ultimosTokens.get(accountId);
     if (
       anterior &&
-      anterior.accessToken === tokens.accessToken &&
-      anterior.refreshToken === tokens.refreshToken
+      anterior.accessToken === novos.accessToken &&
+      anterior.refreshToken === novos.refreshToken
     ) {
       return;
     }
     try {
-      await this.onTokensRenovados?.(accountId, tokens);
+      await this.onTokensRenovados(accountId, novos);
     } catch {
       return;
     }
-    this.ultimosTokens.set(accountId, tokens);
+    this.ultimosTokens.set(accountId, novos);
   }
 }

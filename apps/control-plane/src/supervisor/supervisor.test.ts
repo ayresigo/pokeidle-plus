@@ -125,6 +125,7 @@ describe("Supervisor", () => {
     vi.setSystemTime(0);
     orch = new FakeOrchestrator();
     sup = new Supervisor(orch, 10_000);
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("sem rede")));
   });
 
   afterEach(() => {
@@ -476,6 +477,119 @@ describe("Supervisor", () => {
 
       expect(orch.eventos.slice(4)).toEqual(["inspect:novo-1", "start:novo-1"]);
       expect(orch.criados).toHaveLength(1);
+    });
+  });
+
+  describe("estado do jogo no snapshot", () => {
+    function stubHealth(corpos: Record<string, () => unknown>) {
+      const fetchFalso = vi.fn(async (url: unknown) => {
+        const conta = /mpw-worker-(.+):3001\/health/.exec(String(url))?.[1] ?? "";
+        const corpo = corpos[conta];
+        if (!corpo) return new Response("falhou", { status: 500 });
+        return new Response(JSON.stringify(corpo()), { status: 200 });
+      });
+      vi.stubGlobal("fetch", fetchFalso);
+      return fetchFalso;
+    }
+
+    it("expõe state, lastAction e lastError do /health sem tokens nem uptime", async () => {
+      stubHealth({
+        acc1: () => ({
+          state: "needs-login",
+          lastAction: "login",
+          lastError: "refresh revogado",
+          uptimeSec: 42,
+          tokens: { accessToken: "access-secreto", refreshToken: "refresh-secreto" },
+        }),
+      });
+      orch.adicionar("acc1", "running");
+      sup.start();
+      await tick(0);
+
+      const [snap] = sup.getSnapshot();
+      expect(snap.jogo).toEqual({
+        state: "needs-login",
+        lastAction: "login",
+        lastError: "refresh revogado",
+      });
+      const serial = JSON.stringify(sup.getSnapshot());
+      expect(serial).not.toContain("secreto");
+      expect(serial).not.toContain("tokens");
+      expect(serial).not.toContain("uptimeSec");
+    });
+
+    it("worker não-running tem jogo null e o /health dele não é consultado", async () => {
+      const fetchFalso = stubHealth({ acc1: () => ({ state: "in-game" }) });
+      orch.adicionar("acc1", "exited");
+      sup.start();
+      await tick(0);
+
+      expect(sup.getSnapshot()[0].jogo).toBeNull();
+      expect(fetchFalso).not.toHaveBeenCalled();
+    });
+
+    it("jogo volta a null quando o worker sai de running", async () => {
+      stubHealth({ acc1: () => ({ state: "in-game", lastAction: null, lastError: null }) });
+      orch.adicionar("acc1", "running");
+      sup.start();
+      await tick(0);
+      expect(sup.getSnapshot()[0].jogo).toEqual({
+        state: "in-game",
+        lastAction: null,
+        lastError: null,
+      });
+
+      orch.derrubar("acc1");
+      await tick(10_000);
+      expect(sup.getSnapshot()[0].jogo).toBeNull();
+    });
+
+    it("/health falhando deixa jogo null sem registrar erro nem derrubar o poll", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: unknown) => {
+          if (String(url).includes("mpw-worker-acc1")) throw new Error("ECONNREFUSED");
+          return new Response("falhou", { status: 503 });
+        }),
+      );
+      orch.adicionar("acc1", "running");
+      orch.adicionar("acc2", "running");
+      sup.desireRunning("acc1");
+      sup.start();
+      await tick(0);
+
+      const snap = sup.getSnapshot();
+      expect(snap.map((w) => w.jogo)).toEqual([null, null]);
+      expect(snap[0].lastError).toBeNull();
+      expect(snap[0].degraded).toBe(false);
+    });
+
+    it("update do SSE dispara em mudança de jogo mas não pela passagem do tempo", async () => {
+      let uptime = 0;
+      let estadoJogo = "in-game";
+      stubHealth({
+        acc1: () => {
+          uptime += 10;
+          return { state: estadoJogo, lastAction: "caçando", lastError: null, uptimeSec: uptime };
+        },
+      });
+      const updates: unknown[] = [];
+      sup.mudancas.on("update", (snapshot) => updates.push(snapshot));
+      orch.adicionar("acc1", "running");
+      sup.start();
+      await tick(0);
+      expect(updates).toHaveLength(1);
+
+      await tick(30_000);
+      expect(uptime).toBe(40);
+      expect(updates).toHaveLength(1);
+
+      estadoJogo = "needs-login";
+      await tick(10_000);
+      expect(updates).toHaveLength(2);
+      expect((updates[1] as { jogo: unknown }[])[0].jogo).toMatchObject({
+        state: "needs-login",
+      });
     });
   });
 });
