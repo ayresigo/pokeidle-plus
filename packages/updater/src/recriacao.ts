@@ -57,8 +57,9 @@ function chavesProprias<T>(
 function destinosMontados(hostConfig: Docker.HostConfig): Set<string> {
   const destinos = new Set<string>();
   for (const bind of hostConfig.Binds ?? []) {
-    const destino = bind.split(":")[1];
-    if (destino) destinos.add(destino);
+    const partes = bind.split(":");
+    const destino = partes.at(-1)?.startsWith("/") ? partes.at(-1) : partes.at(-2);
+    if (destino?.startsWith("/")) destinos.add(destino);
   }
   for (const mount of hostConfig.Mounts ?? []) destinos.add(mount.Target);
   return destinos;

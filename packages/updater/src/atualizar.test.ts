@@ -40,13 +40,23 @@ interface Cenario {
   novoParaDeRodar?: boolean;
   extrasPorRole?: Record<string, ContainerListado[]>;
   novoReinicia?: boolean;
+  antigoParado?: boolean;
+  imagemAntigaAusente?: boolean;
+  falhaCriar?: boolean;
+  falhaConectar?: boolean;
+  falhaRenomearDeVolta?: boolean;
+  falhaRemoverNovo?: boolean;
 }
 
 function criarMotor(cenario: Cenario = {}) {
   const chamadas: string[] = [];
   const criados: Docker.ContainerCreateOptions[] = [];
   const inspects: Record<string, Docker.ContainerInspectInfo> = {
-    [ID_CONTROL_PLANE]: inspectControlPlane(),
+    [ID_CONTROL_PLANE]: cenario.antigoParado
+      ? inspectControlPlane({
+          State: { ...inspectControlPlane().State, Status: "exited", Running: false, ExitCode: 0 },
+        })
+      : inspectControlPlane(),
     ...(cenario.semWeb ? {} : { [ID_WEB]: inspectWeb() }),
   };
   const porRole: Record<string, ContainerListado[]> = {
@@ -78,7 +88,9 @@ function criarMotor(cenario: Cenario = {}) {
       } as unknown as Docker.ContainerInspectInfo;
     },
     async inspecionarImagem(ref) {
-      if (ref === "sha256:imagem-antiga") return { Config: CONFIG_IMAGEM_CONTROL_PLANE } as Docker.ImageInspectInfo;
+      if (ref === "sha256:imagem-antiga") {
+        return cenario.imagemAntigaAusente ? null : ({ Config: CONFIG_IMAGEM_CONTROL_PLANE } as Docker.ImageInspectInfo);
+      }
       if (ref.startsWith("sha256:")) return { Config: {} } as unknown as Docker.ImageInspectInfo;
       return cenario.imagensLocais?.includes(ref) ? ({ Config: {} } as unknown as Docker.ImageInspectInfo) : null;
     },
@@ -91,16 +103,19 @@ function criarMotor(cenario: Cenario = {}) {
     },
     async renomear(id, nome) {
       chamadas.push(`renomear:${id}:${nome}`);
+      if (cenario.falhaRenomearDeVolta && !nome.includes("-old-")) throw new Error("conflito de nome");
     },
     async criar(opcoes) {
       const id = `novo-${opcoes.name}`;
       chamadas.push(`criar:${opcoes.name}:${opcoes.Image}`);
+      if (cenario.falhaCriar) throw new Error("nome em uso");
       criados.push(opcoes);
       novos[id] = opcoes;
       return id;
     },
     async conectar(rede, id, endpoint) {
       chamadas.push(`conectar:${rede}:${id}:${(endpoint.Aliases ?? []).join(",")}`);
+      if (cenario.falhaConectar) throw new Error("rede inexistente");
     },
     async iniciar(id) {
       chamadas.push(`iniciar:${id}`);
@@ -108,6 +123,7 @@ function criarMotor(cenario: Cenario = {}) {
     },
     async remover(id) {
       chamadas.push(`remover:${id}`);
+      if (cenario.falhaRemoverNovo && id.startsWith("novo-")) throw new Error("container em uso");
     },
   };
   return { motor, chamadas, criados };
@@ -266,5 +282,69 @@ describe("atualizar", () => {
 
     expect(chamadas.some((c) => c.includes("sobra"))).toBe(false);
     expect(chamadas).toContain(`parar:${ID_WEB}:30`);
+  });
+
+  it("rollback não inicia o container antigo que já estava parado antes do update", async () => {
+    const { motor, chamadas } = criarMotor({ falhaIniciarNovo: true, antigoParado: true });
+
+    await expect(rodar(motor)).rejects.toThrow(/porta ocupada/);
+
+    expect(chamadas.slice(-2)).toEqual([
+      "remover:novo-mpw-control-plane-1",
+      `renomear:${ID_CONTROL_PLANE}:mpw-control-plane-1`,
+    ]);
+    expect(chamadas).not.toContain(`iniciar:${ID_CONTROL_PLANE}`);
+  });
+
+  it("imagem antiga que não pode ser inspecionada aborta antes de parar qualquer container", async () => {
+    const { motor, chamadas } = criarMotor({ imagemAntigaAusente: true });
+
+    await expect(rodar(motor)).rejects.toThrow(
+      /control-plane: não consegui inspecionar a imagem atual sha256:imagem-antiga/,
+    );
+
+    expect(chamadas.some((c) => c.startsWith("parar:"))).toBe(false);
+  });
+
+  it("falha ao criar o novo devolve o nome e reinicia o antigo", async () => {
+    const { motor, chamadas } = criarMotor({ falhaCriar: true });
+
+    await expect(rodar(motor)).rejects.toThrow(/falha ao atualizar control-plane.*nome em uso/);
+
+    expect(chamadas.slice(2)).toEqual([
+      `parar:${ID_CONTROL_PLANE}:30`,
+      `renomear:${ID_CONTROL_PLANE}:mpw-control-plane-1-old-1000`,
+      `criar:mpw-control-plane-1:${NOVA_CP}`,
+      `renomear:${ID_CONTROL_PLANE}:mpw-control-plane-1`,
+      `iniciar:${ID_CONTROL_PLANE}`,
+    ]);
+  });
+
+  it("falha ao conectar rede extra remove o novo e restaura o antigo", async () => {
+    const { motor, chamadas } = criarMotor({ falhaConectar: true });
+
+    await expect(rodar(motor)).rejects.toThrow(/falha ao atualizar control-plane.*rede inexistente/);
+
+    expect(chamadas.slice(4)).toEqual([
+      `criar:mpw-control-plane-1:${NOVA_CP}`,
+      "conectar:extra:novo-mpw-control-plane-1:cp-extra",
+      "remover:novo-mpw-control-plane-1",
+      `renomear:${ID_CONTROL_PLANE}:mpw-control-plane-1`,
+      `iniciar:${ID_CONTROL_PLANE}`,
+    ]);
+  });
+
+  it("falhas dentro do rollback aparecem como rollback incompleto e o resto do rollback continua", async () => {
+    const { motor, chamadas } = criarMotor({
+      falhaIniciarNovo: true,
+      falhaRemoverNovo: true,
+      falhaRenomearDeVolta: true,
+    });
+
+    await expect(rodar(motor)).rejects.toThrow(
+      /porta ocupada; rollback incompleto: remover novo: container em uso; renomear antigo: conflito de nome/,
+    );
+
+    expect(chamadas.at(-1)).toBe(`iniciar:${ID_CONTROL_PLANE}`);
   });
 });

@@ -78,6 +78,16 @@ describe("planejarRecriacao", () => {
     ]);
   });
 
+  it("lê o destino do bind pela direita, inclusive com caminho de host do Windows", () => {
+    for (const bind of ["C:\\mpw\\dados:/data", "C:\\mpw\\dados:/data:rw", "/srv/dados:/data:ro"]) {
+      const inspect = inspectControlPlane();
+      inspect.HostConfig = { ...inspect.HostConfig, Binds: [bind], Mounts: [] };
+      const plano = planejarRecriacao(inspect, CONFIG_IMAGEM_CONTROL_PLANE, NOVA);
+      expect(plano.criar.HostConfig?.Binds).toEqual([bind]);
+      expect(plano.criar.HostConfig?.Mounts).toEqual([]);
+    }
+  });
+
   it("não altera o inspect recebido", () => {
     const inspect = inspectControlPlane();
     const antes = structuredClone(inspect);

@@ -42,6 +42,7 @@ interface AlvoPreparado {
   role: string;
   id: string;
   novaImagem: string;
+  estavaRodando: boolean;
   plano: PlanoRecriacao;
 }
 
@@ -85,11 +86,17 @@ export async function atualizar(opts: OpcoesAtualizacao): Promise<void> {
       log(`pull de ${novaImagem} falhou (${mensagemDeErro(err)}); usando a imagem local`);
     }
     const imagemAntiga = await motor.inspecionarImagem(inspect.Image);
+    if (imagemAntiga === null) {
+      throw new Error(
+        `${role}: não consegui inspecionar a imagem atual ${inspect.Image}; atualização abortada sem parar nada`,
+      );
+    }
     alvos.push({
       role,
       id: inspect.Id,
       novaImagem,
-      plano: planejarRecriacao(inspect, imagemAntiga?.Config ?? {}, novaImagem),
+      estavaRodando: inspect.State.Running,
+      plano: planejarRecriacao(inspect, imagemAntiga.Config, novaImagem),
     });
   }
 
@@ -100,7 +107,7 @@ export async function atualizar(opts: OpcoesAtualizacao): Promise<void> {
 }
 
 async function recriar(
-  { role, id, novaImagem, plano }: AlvoPreparado,
+  { role, id, novaImagem, estavaRodando, plano }: AlvoPreparado,
   opts: OpcoesAtualizacao,
   log: (mensagem: string) => void,
 ): Promise<void> {
@@ -132,7 +139,9 @@ async function recriar(
         .renomear(id, plano.nome)
         .catch((e) => falhasRollback.push(`renomear antigo: ${mensagemDeErro(e)}`));
     }
-    await motor.iniciar(id).catch((e) => falhasRollback.push(`iniciar antigo: ${mensagemDeErro(e)}`));
+    if (estavaRodando) {
+      await motor.iniciar(id).catch((e) => falhasRollback.push(`iniciar antigo: ${mensagemDeErro(e)}`));
+    }
     const sufixo = falhasRollback.length > 0 ? `; rollback incompleto: ${falhasRollback.join("; ")}` : "";
     throw new Error(`falha ao atualizar ${role} para ${novaImagem}: ${mensagemDeErro(err)}${sufixo}`);
   }
