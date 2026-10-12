@@ -11,10 +11,15 @@ export interface TokenPair {
   refreshToken: string;
 }
 
+const JWT_SECRET_MINIMO = 32;
+
 export function requireJwtSecret(): string {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
     throw new Error("JWT_SECRET não definido no ambiente");
+  }
+  if (secret.length < JWT_SECRET_MINIMO) {
+    throw new Error(`JWT_SECRET precisa ter pelo menos ${JWT_SECRET_MINIMO} caracteres`);
   }
   return secret;
 }

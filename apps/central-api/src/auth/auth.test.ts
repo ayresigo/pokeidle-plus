@@ -10,7 +10,7 @@ try {
 } catch {
 }
 
-process.env.JWT_SECRET ??= "segredo-teste-auth";
+process.env.JWT_SECRET ??= "segredo-teste-auth-com-32-caracteres-no-minimo";
 process.env.SECRETS_KEY ??= "0".repeat(64);
 
 import { buildApp } from "../app.js";
@@ -218,6 +218,16 @@ describe("auth", () => {
     } finally {
       process.env.JWT_SECRET = secret;
       vi.resetModules();
+    }
+  });
+
+  it("buildApp lança se JWT_SECRET tem menos de 32 caracteres", () => {
+    const secret = process.env.JWT_SECRET;
+    process.env.JWT_SECRET = "a".repeat(31);
+    try {
+      expect(() => buildApp()).toThrow(/JWT_SECRET.*32/);
+    } finally {
+      process.env.JWT_SECRET = secret;
     }
   });
 
