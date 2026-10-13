@@ -167,8 +167,10 @@ Compras, vendas, cura, rotina e troca de hunt são **Phase 2 (autoplay)**, fora 
   frame `hello` → `welcome`. Sharding djb2 (88) do protocolo antigo removido do worker.
 - **`hunt.select` → `campo.init` (VAL-03) → CONFIRMADO.** Slug inválido → `batalha/aviso`. Slug `bellsprout`.
 - **Fonte da hunt (C1) → CONFIRMADO.** `welcome.estado.huntSlug` = última hunt; o servidor auto-retoma.
-  O worker resolve a hunt por: `HUNT_SLUG` (config por conta) → `estado.huntSlug` → default `bellsprout`,
-  e envia `hunt.select` no `welcome` (idempotente) para garantir a caça mesmo sem auto-retomada.
+  O worker resolve a hunt por: `HUNT_SLUG` (config por conta) → `estado.huntSlug` → default `bellsprout`
+  (**default arbitrário**: hunt inicial de Kanto, usada só quando não há config nem hunt no servidor — p.ex.
+  conta nova sem hunt). O worker envia `hunt.select` no `welcome` para garantir a caça; se o servidor já tiver
+  auto-retomado a mesma hunt, reenviar não causou problema no smoke, mas **não foi provado idempotente**.
 - **Kills por `batalha/morte`, contador por `dexMud` (VAL-04) → CONFIRMADO.**
 - **Robustez preservada (coberta por teste):** backoff+jitter+teto longo, heartbeat ping/pong,
   `invalidar` ≤1×/5 min, transitório vs definitivo, watchdog-stall, drain close 1000.

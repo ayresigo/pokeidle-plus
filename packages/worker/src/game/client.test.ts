@@ -82,11 +82,12 @@ const tokensNovos: Tokens = { accessToken: accessNovo, refreshToken: "refresh-2"
 
 let servidor: ServidorJogo;
 let health: HealthState;
-let auth: AuthJogo & { getTokens: Mock; invalidar: Mock };
+let auth: AuthJogo & { getTokens: Mock; invalidar: Mock; adotar: Mock; nick: Mock };
 let cliente: GameClient | null = null;
 
-function criarAuth(): AuthJogo & { getTokens: Mock; invalidar: Mock; adotar: Mock } {
+function criarAuth(): AuthJogo & { getTokens: Mock; invalidar: Mock; adotar: Mock; nick: Mock } {
   let atuais = tokensIniciais;
+  let nickAtual: string | null = "trembebe";
   return {
     getTokens: vi.fn(async () => atuais),
     invalidar: vi.fn(async () => {
@@ -95,7 +96,9 @@ function criarAuth(): AuthJogo & { getTokens: Mock; invalidar: Mock; adotar: Moc
     }),
     adotar: vi.fn((t: Tokens) => {
       atuais = t;
+      if (t.nick) nickAtual = t.nick;
     }),
+    nick: vi.fn(() => nickAtual),
   };
 }
 
@@ -286,6 +289,39 @@ describe("GameClient: handshake e eventos", () => {
       expect(segunda.mensagens[0]).toMatchObject({ t: "hello", token: "token-renovado-ws" }),
     );
   });
+
+  it("hunt: config HUNT_SLUG tem prioridade sobre estado.huntSlug", async () => {
+    const c = novoCliente({ huntSlug: "caterpie" });
+    c.conectar();
+    const conexao = await servidor.conexao(0);
+    servidor.emitir(conexao, { t: "welcome", estado: { huntSlug: "doServidor" } });
+    await vi.waitFor(() =>
+      expect(conexao.mensagens).toContainEqual({ t: "hunt.select", slug: "caterpie" }),
+    );
+    expect(c.huntAlvo).toBe("caterpie");
+  });
+
+  it("hunt: sem config usa estado.huntSlug do welcome", async () => {
+    const c = novoCliente({ huntSlug: undefined });
+    c.conectar();
+    const conexao = await servidor.conexao(0);
+    servidor.emitir(conexao, { t: "welcome", estado: { huntSlug: "doServidor" } });
+    await vi.waitFor(() =>
+      expect(conexao.mensagens).toContainEqual({ t: "hunt.select", slug: "doServidor" }),
+    );
+    expect(c.huntAlvo).toBe("doServidor");
+  });
+
+  it("hunt: sem config e sem estado.huntSlug usa o default bellsprout", async () => {
+    const c = novoCliente({ huntSlug: undefined });
+    c.conectar();
+    const conexao = await servidor.conexao(0);
+    servidor.emitir(conexao, { t: "welcome", estado: {} });
+    await vi.waitFor(() =>
+      expect(conexao.mensagens).toContainEqual({ t: "hunt.select", slug: "bellsprout" }),
+    );
+    expect(c.huntAlvo).toBe("bellsprout");
+  });
 });
 
 describe("GameClient: fechamentos e reconexão", () => {
@@ -396,6 +432,17 @@ describe("GameClient: fechamentos e reconexão", () => {
     c.conectar();
     await expect(c.encerrado).resolves.toMatchObject({ estado: "needs-login" });
     expect(health.snapshot().state).toBe("needs-login");
+  });
+
+  it("getTokens com AuthAdiadaError reconecta com backoff e não encerra", async () => {
+    auth.getTokens.mockRejectedValueOnce(new AuthAdiadaError("renovação adiada"));
+    servidor.aoConectar = (conexao) =>
+      conexao.socket.send(JSON.stringify({ t: "welcome", estado: {} }));
+    const c = novoCliente();
+    c.conectar();
+    await vi.waitFor(() => expect(health.snapshot().state).toBe("in-game"));
+    expect(c.conectado).toBe(true);
+    expect(health.snapshot().state).not.toBe("needs-login");
   });
 
   it("heartbeat: silêncio → ping {t:'ping'}; sem resposta → fecha e reconecta", async () => {
@@ -581,10 +628,10 @@ describe("GameClient: close codes e sessão substituída (I5)", () => {
     semReconexao(c, 1);
   });
 
-  it("close 4000 → needs-login (conta bloqueada) sem reconectar", async () => {
+  it("close 4000 → error (conta bloqueada/banida) sem reconectar", async () => {
     const { c, conexao } = await emJogo();
     conexao.socket.close(4000, "ban");
-    await expect(c.encerrado).resolves.toMatchObject({ estado: "needs-login" });
+    await expect(c.encerrado).resolves.toMatchObject({ estado: "error" });
     semReconexao(c, 1);
   });
 
@@ -603,5 +650,22 @@ describe("GameClient: close codes e sessão substituída (I5)", () => {
     c.conectar();
     await expect(c.encerrado).resolves.toMatchObject({ estado: "needs-login" });
     expect(health.snapshot().lastError).toContain("substituída");
+  });
+
+  it("erro pré-welcome com chave desconhecida fecha e reconecta (não trava, sem invalidar)", async () => {
+    servidor.aoConectar = (conexao) => {
+      if (servidor.conexoes.length === 1) {
+        conexao.socket.once("message", () =>
+          conexao.socket.send(JSON.stringify({ t: "erro", chave: "algo.desconhecido" })),
+        );
+      } else {
+        conexao.socket.send(JSON.stringify({ t: "welcome", estado: {} }));
+      }
+    };
+    const c = novoCliente();
+    c.conectar();
+    await servidor.conexao(1);
+    await vi.waitFor(() => expect(health.snapshot().state).toBe("in-game"));
+    expect(auth.invalidar).not.toHaveBeenCalled();
   });
 });

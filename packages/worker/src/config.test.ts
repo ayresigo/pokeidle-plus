@@ -53,6 +53,15 @@ describe("loadConfig", () => {
     );
   });
 
+  it("o dispositivo é determinístico por ACCOUNT_ID (estável entre processos)", () => {
+    const a1 = loadConfig({ ...comTokens, ACCOUNT_ID: "conta-A" }).dispositivo;
+    const a2 = loadConfig({ ...comTokens, ACCOUNT_ID: "conta-A" }).dispositivo;
+    const b = loadConfig({ ...comTokens, ACCOUNT_ID: "conta-B" }).dispositivo;
+    expect(a1).toBe(a2);
+    expect(a1).not.toBe(b);
+    expect(a1).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  });
+
   it("usa o DISPOSITIVO do env quando presente", () => {
     const config = loadConfig({ ...comSolver, DISPOSITIVO: "uuid-do-cliente" });
     expect(config.dispositivo).toBe("uuid-do-cliente");

@@ -7,6 +7,7 @@ import {
   AuthAdiadaError,
   AuthIndisponivelError,
   AuthManager,
+  ehTransitorio,
   LoginError,
   SolverTokenProvider,
   StoredTokenProvider,
@@ -126,6 +127,7 @@ describe("SolverTokenProvider", () => {
     await expect(provider.getTokens()).resolves.toEqual({
       accessToken: "token-opaco-login",
       refreshToken: "token-opaco-login",
+      nick: "Ash",
     });
 
     expect(fetchJogo).toHaveBeenCalledTimes(1);
@@ -456,11 +458,69 @@ describe("AuthManager — transitório vs definitivo (I3/I4)", () => {
     expect(health.snapshot().state).toBe("needs-login");
   });
 
-  it("LoginError de rede é transitório; 4xx de credencial é definitivo", () => {
-    expect(new LoginError("falha de rede no login", true).transitorio).toBe(true);
-    expect(new LoginError("login recusado (HTTP 400)").transitorio).toBe(false);
-    expect(new SolverError("HTTP 503", true).transitorio).toBe(true);
-    expect(new SolverError("errorId", false).transitorio).toBe(false);
+  it("login.turnstileFalhou (HTTP 400) é transitório via SolverTokenProvider", async () => {
+    const provider = new SolverTokenProvider(
+      { ...configBase, turnstileSitekey: "0x4AAAAAAAoverride12345" },
+      {
+        fetchJogo: jogo({
+          "https://jogo.example/auth/entrar": () => respostaJson({ erro: "login.turnstileFalhou" }, 400),
+        }),
+        fetchSolver: solverFeliz(),
+        sleep: async () => {},
+      },
+    );
+    const erro = await erroDe(provider.getTokens());
+    expect(erro).toBeInstanceOf(LoginError);
+    expect(ehTransitorio(erro)).toBe(true);
+  });
+
+  it("login.credenciaisInvalidas (HTTP 401) é definitivo", async () => {
+    const provider = new SolverTokenProvider(
+      { ...configBase, turnstileSitekey: "0x4AAAAAAAoverride12345" },
+      {
+        fetchJogo: jogo({
+          "https://jogo.example/auth/entrar": () =>
+            respostaJson({ erro: "login.credenciaisInvalidas" }, 401),
+        }),
+        fetchSolver: solverFeliz(),
+        sleep: async () => {},
+      },
+    );
+    expect(ehTransitorio(await erroDe(provider.getTokens()))).toBe(false);
+  });
+
+  it("solver classifica errorCode: NO_SLOT/UNSOLVABLE transitório; ZERO_BALANCE/KEY definitivo", async () => {
+    const comCodigo = (errorCode: string) =>
+      new SolverTokenProvider(
+        { ...configBase, turnstileSitekey: "0x4AAAAAAAoverride12345" },
+        {
+          fetchJogo: jogo({}),
+          fetchSolver: vi.fn<HttpFetch>(async () => respostaJson({ errorId: 1, errorCode })),
+          sleep: async () => {},
+        },
+      );
+    expect(ehTransitorio(await erroDe(comCodigo("ERROR_NO_SLOT_AVAILABLE").getTokens()))).toBe(true);
+    expect(ehTransitorio(await erroDe(comCodigo("ERROR_CAPTCHA_UNSOLVABLE").getTokens()))).toBe(true);
+    expect(ehTransitorio(await erroDe(comCodigo("ERROR_ZERO_BALANCE").getTokens()))).toBe(false);
+    expect(ehTransitorio(await erroDe(comCodigo("ERROR_KEY_DOES_NOT_EXIST").getTokens()))).toBe(false);
+  });
+
+  it("solver que nunca fica ready (timeout) é transitório", async () => {
+    const provider = new SolverTokenProvider(
+      { ...configBase, turnstileSitekey: "0x4AAAAAAAoverride12345" },
+      {
+        fetchJogo: jogo({}),
+        fetchSolver: vi.fn<HttpFetch>(async (url) =>
+          String(url).endsWith("/createTask")
+            ? respostaJson({ errorId: 0, taskId: 1 })
+            : respostaJson({ errorId: 0, status: "processing" }),
+        ),
+        sleep: async () => {},
+      },
+    );
+    const erro = await erroDe(provider.getTokens());
+    expect(erro).toBeInstanceOf(SolverError);
+    expect(ehTransitorio(erro)).toBe(true);
   });
 
   it("agenda renovação antes do exp e re-loga pelo solver, reagendando", async () => {
@@ -494,6 +554,33 @@ describe("AuthManager — transitório vs definitivo (I3/I4)", () => {
       solver.getTokens.mockClear();
       await vi.advanceTimersByTimeAsync(600_000);
       expect(solver.getTokens).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("adotar atualiza os tokens e publica no health (write-back) + nick", () => {
+    const health = new HealthState({ accessToken: "a0", refreshToken: "r0" });
+    const manager = criarGerente(health, { stored: provedor(opaco), solver: provedor(opaco) });
+    manager.adotar({ accessToken: "a1", refreshToken: "a1", nick: "Zé" });
+    expect(health.snapshot().tokens).toEqual({ accessToken: "a1", refreshToken: "a1" });
+    expect(manager.nick()).toBe("Zé");
+  });
+
+  it("invalidar com renovação transitória pendente lança AuthAdiadaError sem novo solve", async () => {
+    vi.useFakeTimers();
+    try {
+      const solver = {
+        getTokens: vi.fn<() => Promise<Tokens>>().mockRejectedValue(new SolverError("rede", true)),
+      };
+      const manager = criarGerente(new HealthState(null), {
+        stored: provedor(new AuthIndisponivelError("sem")),
+        solver,
+      });
+      await manager.autenticar();
+      expect(solver.getTokens).toHaveBeenCalledTimes(1);
+      await expect(manager.invalidar()).rejects.toBeInstanceOf(AuthAdiadaError);
+      expect(solver.getTokens).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }

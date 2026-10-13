@@ -16,6 +16,12 @@ export class SolverError extends Error {
   }
 }
 
+const CODIGOS_SOLVER_DEFINITIVOS: Record<string, true> = {
+  ERROR_KEY_DOES_NOT_EXIST: true,
+  ERROR_ZERO_BALANCE: true,
+  ERROR_WRONG_USER_KEY: true,
+};
+
 export interface AlvoTurnstile {
   websiteURL: string;
   websiteKey: string;
@@ -59,7 +65,11 @@ async function postarSolver(
   }
   const dados = await lerJson(resposta);
   if (dados.errorId !== 0) {
-    throw new SolverError(`solver retornou erro ${String(dados.errorCode ?? dados.errorId)}`);
+    const codigo = typeof dados.errorCode === "string" ? dados.errorCode : "";
+    throw new SolverError(
+      `solver retornou erro ${codigo || String(dados.errorId)}`,
+      !CODIGOS_SOLVER_DEFINITIVOS[codigo],
+    );
   }
   return dados;
 }

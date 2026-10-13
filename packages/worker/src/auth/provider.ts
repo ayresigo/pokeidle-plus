@@ -41,6 +41,13 @@ export function ehTransitorio(erro: unknown): boolean {
   return (erro instanceof SolverError || erro instanceof LoginError) && erro.transitorio;
 }
 
+const CHAVES_LOGIN_TRANSITORIAS: Record<string, true> = {
+  "login.turnstileFalhou": true,
+  "login.muitasTentativas": true,
+  "login.entrando": true,
+  "login.criando": true,
+};
+
 export function ocultarSegredos(texto: string, segredos: readonly (string | undefined)[]): string {
   return segredos.reduce<string>(
     (resultado, segredo) => (segredo ? resultado.replaceAll(segredo, "***") : resultado),
@@ -108,9 +115,10 @@ async function loginComCaptcha(
       typeof corpo.erro === "string" && corpo.erro !== ""
         ? `: ${ocultarSegredos(corpo.erro, [password, captcha.token])}`
         : "";
+    const chave = typeof corpo.erro === "string" ? corpo.erro : "";
     throw new LoginError(
       `login recusado (HTTP ${resposta.status})${motivo}`,
-      resposta.status >= 500 || resposta.status === 429,
+      resposta.status >= 500 || resposta.status === 429 || CHAVES_LOGIN_TRANSITORIAS[chave] === true,
     );
   }
   if (corpo.precisaNick === true) {
@@ -120,7 +128,8 @@ async function loginComCaptcha(
   if (typeof token !== "string" || token === "") {
     throw new LoginError("resposta do login sem token");
   }
-  return { accessToken: token, refreshToken: token };
+  const nick = typeof corpo.nick === "string" && corpo.nick !== "" ? corpo.nick : undefined;
+  return { accessToken: token, refreshToken: token, nick };
 }
 
 export class SolverTokenProvider implements TokenProvider {
@@ -192,6 +201,7 @@ const DESCRICAO_ORIGEM: Record<OrigemTokens, string> = {
 
 export class AuthManager implements TokenProvider {
   private tokens: Tokens | null = null;
+  private nickAtual: string | null = null;
   private timer: NodeJS.Timeout | undefined;
   private fluxo: Promise<ResultadoAuth> | null = null;
   private parado = false;
@@ -209,6 +219,9 @@ export class AuthManager implements TokenProvider {
   }
 
   async invalidar(): Promise<Tokens> {
+    if (this.falhasTransitorias > 0) {
+      throw new AuthAdiadaError("renovação transitória já agendada; aguardando retry");
+    }
     const resultado = await this.unico(() => this.executarRenovacao());
     if (resultado.ok && this.tokens) return this.tokens;
     if (!resultado.ok && !resultado.needsLogin) throw new AuthAdiadaError(resultado.motivo);
@@ -229,7 +242,12 @@ export class AuthManager implements TokenProvider {
     return this.tokens;
   }
 
+  nick(): string | null {
+    return this.nickAtual;
+  }
+
   adotar(tokens: Tokens): void {
+    if (tokens.nick) this.nickAtual = tokens.nick;
     this.tokens = tokens;
     this.aceitoEm = Date.now();
     this.falhasTransitorias = 0;
@@ -305,6 +323,7 @@ export class AuthManager implements TokenProvider {
 
   private aceitar(tokens: Tokens, origem: OrigemTokens): ResultadoAuth {
     this.tokens = tokens;
+    if (tokens.nick) this.nickAtual = tokens.nick;
     this.aceitoEm = Date.now();
     this.falhasTransitorias = 0;
     this.health.setTokens(tokens);

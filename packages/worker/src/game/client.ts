@@ -9,6 +9,7 @@ export interface AuthJogo {
   getTokens(): Promise<Tokens>;
   invalidar(): Promise<Tokens>;
   adotar(tokens: Tokens): void;
+  nick(): string | null;
 }
 
 export interface EstadoJogo {
@@ -71,7 +72,7 @@ const HUNT_PADRAO = "bellsprout";
 const JANELA_POS_WELCOME_MS = 60_000;
 const MAX_QUEDAS_POS_WELCOME = 4;
 const FECHAMENTOS_TERMINAIS: Record<number, MotivoEncerramento> = {
-  4000: { estado: "needs-login", motivo: "conta bloqueada pelo servidor (close 4000)" },
+  4000: { estado: "error", motivo: "conta bloqueada/banida pelo servidor (close 4000)" },
   4001: { estado: "needs-login", motivo: "sessão substituída: conta aberta em outro lugar? (close 4001)" },
   4003: { estado: "error", motivo: "IP banido pelo servidor (close 4003)" },
 };
@@ -92,16 +93,6 @@ const CHAVES_RECUSA_TOKEN: Record<string, true> = {
 
 function ehRegistro(valor: unknown): valor is Record<string, unknown> {
   return typeof valor === "object" && valor !== null && !Array.isArray(valor);
-}
-
-function decodificarNick(token: string): string | null {
-  try {
-    const segmento = token.split(".")[0] ?? "";
-    const payload: unknown = JSON.parse(Buffer.from(segmento, "base64url").toString("utf8"));
-    return ehRegistro(payload) && typeof payload.nick === "string" ? payload.nick : null;
-  } catch {
-    return null;
-  }
 }
 
 function somarDex(dex: Record<string, unknown>): { kills: number; capturas: number } {
@@ -235,6 +226,10 @@ export class GameClient implements ClienteJogo {
     } catch (erro) {
       this.abrindo = false;
       const detalhe = erro instanceof Error ? erro.message : String(erro);
+      if (erro instanceof AuthAdiadaError) {
+        this.reconectarComBackoff(`autenticação adiada: ${detalhe}`);
+        return;
+      }
       this.encerrar({ estado: "needs-login", motivo: `sem tokens para o jogo: ${detalhe}` });
       return;
     }
@@ -273,7 +268,7 @@ export class GameClient implements ClienteJogo {
     this.ultimaMensagemEm = agora;
     this.pingEm = 0;
     Object.assign(this.dados, { huntAtual: null, huntDesde: null, huntSelectEnviadoEm: null });
-    const nick = this.tokenHello ? decodificarNick(this.tokenHello) : null;
+    const nick = this.opcoes.auth.nick();
     this.enviar({
       t: "hello",
       nick: nick ?? "",
@@ -536,7 +531,8 @@ export class GameClient implements ClienteJogo {
         void this.tratarHelloRecusado(msg);
         return;
       }
-      this.opcoes.health.setLastError(`jogo (pré-welcome): ${msg}`);
+      this.opcoes.health.setLastError(`jogo (pré-welcome, chave desconhecida): ${msg}`);
+      this.socket?.close(1000, "erro-pre-welcome");
       return;
     }
     this.opcoes.health.setLastError(`jogo: ${msg}`);

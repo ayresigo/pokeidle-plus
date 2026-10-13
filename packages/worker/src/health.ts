@@ -6,6 +6,7 @@ export type WorkerState = "booting" | "authenticating" | "in-game" | "needs-logi
 export interface Tokens {
   accessToken: string;
   refreshToken: string;
+  nick?: string;
 }
 
 export interface HealthSnapshot {
