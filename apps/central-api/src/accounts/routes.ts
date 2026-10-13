@@ -107,7 +107,7 @@ export function registerAccountRoutes(app: FastifyInstance, prisma: PrismaClient
             label: request.body.label!,
             pokeidleUser: request.body.pokeidleUser!,
             proxyUrl: request.body.proxyUrl ?? null,
-            huntSlug: request.body.huntSlug ?? null,
+            huntSlug: request.body.huntSlug || null,
             pokeidlePassEnc: encrypt(request.body.pokeidlePass!),
             solverKeyEnc: request.body.solverKey === undefined ? null : encrypt(request.body.solverKey),
             accessTokenEnc:
@@ -138,7 +138,7 @@ export function registerAccountRoutes(app: FastifyInstance, prisma: PrismaClient
             ...(body.label !== undefined && { label: body.label }),
             ...(body.pokeidleUser !== undefined && { pokeidleUser: body.pokeidleUser }),
             ...(body.proxyUrl !== undefined && { proxyUrl: body.proxyUrl }),
-            ...(body.huntSlug !== undefined && { huntSlug: body.huntSlug }),
+            ...(body.huntSlug !== undefined && { huntSlug: body.huntSlug || null }),
             ...camposCriptografados(body),
           },
         });

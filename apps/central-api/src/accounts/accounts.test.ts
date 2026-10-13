@@ -282,6 +282,22 @@ describe("accounts", () => {
       expect(atualizado.huntSlug).toBe("oddish");
     });
 
+    it("PATCH com huntSlug vazio volta a null", async () => {
+      const { accessToken } = await seedUser("may");
+      const criada = await criarConta(accessToken, { huntSlug: "bellsprout" });
+      const id = criada.json().id;
+      const patch = await app.inject({
+        method: "PATCH",
+        url: `/accounts/${id}`,
+        headers: authed(accessToken),
+        payload: { huntSlug: "" },
+      });
+      expect(patch.statusCode).toBe(200);
+      expect(patch.json().huntSlug).toBeNull();
+      const atualizado = await prisma.account.findUniqueOrThrow({ where: { id } });
+      expect(atualizado.huntSlug).toBeNull();
+    });
+
     it("ausente fica null e não está entre campos criptografados", async () => {
       const { accessToken } = await seedUser("ash");
       const criada = await criarConta(accessToken);
