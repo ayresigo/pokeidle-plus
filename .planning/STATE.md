@@ -24,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-10-12)
 
 ## Current Position
 
-Phase: 01.1 (Migrar worker para pokeidle.io, INSERTED) — PLANEJADA no worktree migracao-pokeidle-io (branch ayresigo/migracao-pokeidle-io, merge da main feito)
-Plan: 6 plans escritos (1..6), aguardando aprovação do usuário para executar
-Status: Awaiting plan approval (não executar /gsd-execute-phase até o coordenador avisar)
-Last activity: 2026-10-13 — discuss 01.1 (D-S1..D-S6) + plano em 6 waves; smoke real gated por confirmação do usuário (D-S1)
+Phase: 01.1 (Migrar worker para pokeidle.io, INSERTED) — waves 1-5 EXECUTADAS no worktree migracao-pokeidle-io
+Plan: 5/6 planos concluídos (1-5); 6-PLAN (smoke real + release beta) PENDENTE, gated por confirmação do usuário (D-S1)
+Status: Waves 1-5 verdes; aguardando aprovação do usuário p/ rodar a wave 6 (smoke real)
+Last activity: 2026-10-13 — migração do worker p/ pokeidle.io: GAME.md fonte única, auth revisada, sharding removido, sessao.renovada→write-back, domínio migrado no repo, E2E 7/7 verde
 
 Progress: [██░░░░░░░░] 25% (1 de 4 fases)
 
