@@ -36,18 +36,25 @@ bind de `remoteip` que invalide o token por IP divergente.
   no chunk `3aqjofv7-1o3x.js` (lido em 2026-10-12); só a sitekey. Sitekey `0x4AAAAAADkKBnFEMDt0MGBM`
   continua atual. Logo o `TurnstileTaskProxyless` (só sitekey+URL) gera token estruturalmente correto.
 
-### Bloqueio atual: credencial, não captcha
-Com o token do solver aceito, o login ainda retorna **401 "Email ou senha incorretos"** para
-`ayresigo12@gmail.com` + a senha fornecida. Como o login manual "funciona no navegador", a
-hipótese dominante é que a conta é **baseada em Google** (criada/entra por "Sign in with Google",
-`/api/auth/google`) e **não tem senha nativa** para `/api/auth/login` — ou a senha nativa difere
-da fornecida. O comportamento do worker é **correto**: cai em `needs-login` com `lastError` claro,
-sem loop.
+### Bloqueio atual: credencial (não captcha, não headers)
+Com o token do solver aceito, o login retorna **401 "Email ou senha incorretos"** para
+`ayresigo12@gmail.com` + a senha fornecida. Descartados (2026-10-12):
+- **Headers:** probe com headers de navegador (Origin/Referer/UA Chrome/Accept/sec-fetch) **e** com
+  headers mínimos, ambos com token válido fresco → **os dois 401**. Não é diferença de header.
+- **Hash de senha no cliente:** NÃO. O bundle envia `password` cru (`apiPost("/api/auth/login",{identifier,password,captchaToken})`, `password = valor do input`); o `crypto.subtle`/`SHA-256` do chunk é gerador de id/fingerprint, não toca a senha.
+- **`remoteip`/`action`/`cData`:** descartados (token do 2captcha passa do anti-robô; render só com sitekey).
+- **Integridade:** `POKEIDLE_USER`/`POKEIDLE_PASS` conferem por sha256 com os literais fornecidos.
+- **Google:** o usuário confirmou que a conta é **nativa** (não SSO Google), e que o login manual por e-mail+senha funciona no navegador.
 
-**Implicação para o projeto (login automático):** o worker consegue autenticar sozinho via
-solver **desde que a conta tenha login nativo e-mail+senha** (contas só-Google não têm senha para
-o endpoint nativo; automatizar o OAuth do Google está fora do escopo atual). Próximo passo:
-validar com uma conta **criada com e-mail+senha** (ou com senha nativa definida).
+Resta a única explicação consistente: **a string de senha que o backend aceita não é exatamente
+`@3228499aS`** — provavelmente o navegador envia um valor salvo pelo gerenciador de senhas
+diferente do digitado, ou há um caractere/charset sutil. Próximo passo de diagnóstico: comparar,
+no DevTools → Network → requisição `login` bem-sucedida → Payload, o valor de `password` enviado
+pelo navegador com `@3228499aS` (mesmo tamanho/caracteres?).
+
+**Implicação para o projeto (login automático):** o caminho solver → login **funciona**; o único
+pendente é fornecer a credencial nativa exata que o backend aceita. Nenhuma correção de código é
+indicada por esta evidência (o worker se comporta corretamente).
 
 **Guardas aplicadas:** nenhuma compra/venda; sem `cmid`; sondas de login não abrem sessão WS
 (sem 4005); segredos só no `.env` local (ignorado pelo git); nenhum token/senha/chave neste arquivo.
