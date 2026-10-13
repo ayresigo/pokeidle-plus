@@ -253,6 +253,15 @@ describe("accounts", () => {
   });
 
   describe("huntSlug", () => {
+    it("POST com huntSlug vazio grava null", async () => {
+      const { accessToken } = await seedUser("brock");
+      const criada = await criarConta(accessToken, { huntSlug: "" });
+      expect(criada.statusCode).toBe(201);
+      expect(criada.json().huntSlug).toBeNull();
+      const salvo = await prisma.account.findUniqueOrThrow({ where: { id: criada.json().id } });
+      expect(salvo.huntSlug).toBeNull();
+    });
+
     it("cria, atualiza e lê huntSlug sem criptografar", async () => {
       const { accessToken } = await seedUser("ash");
       const criada = await criarConta(accessToken, { huntSlug: "bellsprout" });

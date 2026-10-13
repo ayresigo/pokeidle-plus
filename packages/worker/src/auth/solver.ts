@@ -100,7 +100,7 @@ export async function resolverTurnstile(
     const resultado = await postarSolver(`${apiUrl}/getTaskResult`, { clientKey, taskId }, fetch);
     if (resultado.status === "processing") continue;
     if (resultado.status !== "ready") {
-      throw new SolverError(`status inesperado do solver: ${String(resultado.status)}`);
+      throw new SolverError(`status inesperado do solver: ${String(resultado.status)}`, true);
     }
     const solucao: Record<string, unknown> =
       typeof resultado.solution === "object" && resultado.solution !== null

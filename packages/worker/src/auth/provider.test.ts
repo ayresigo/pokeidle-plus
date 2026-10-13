@@ -523,6 +523,24 @@ describe("AuthManager — transitório vs definitivo (I3/I4)", () => {
     expect(ehTransitorio(erro)).toBe(true);
   });
 
+  it("status inesperado do solver (nem processing nem ready) é transitório", async () => {
+    const provider = new SolverTokenProvider(
+      { ...configBase, turnstileSitekey: "0x4AAAAAAAoverride12345" },
+      {
+        fetchJogo: jogo({}),
+        fetchSolver: vi.fn<HttpFetch>(async (url) =>
+          String(url).endsWith("/createTask")
+            ? respostaJson({ errorId: 0, taskId: 1 })
+            : respostaJson({ errorId: 0, status: "falhou" }),
+        ),
+        sleep: async () => {},
+      },
+    );
+    const erro = await erroDe(provider.getTokens());
+    expect(erro).toBeInstanceOf(SolverError);
+    expect(ehTransitorio(erro)).toBe(true);
+  });
+
   it("agenda renovação antes do exp e re-loga pelo solver, reagendando", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);

@@ -416,7 +416,6 @@ export class GameClient implements ClienteJogo {
       return;
     }
     if (!ehRegistro(m)) return;
-    this.tentativas = 0;
     if (
       this.quedasPosWelcome > 0 &&
       this.welcomeEm > 0 &&
@@ -459,6 +458,7 @@ export class GameClient implements ClienteJogo {
 
   private aoWelcome(m: Record<string, unknown>): void {
     this.emJogo = true;
+    this.tentativas = 0;
     this.welcomeEm = Date.now();
     this.dados.conectadoEm = Date.now();
     this.opcoes.health.setState("in-game");

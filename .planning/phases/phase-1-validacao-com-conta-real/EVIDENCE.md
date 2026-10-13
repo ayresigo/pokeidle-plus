@@ -18,7 +18,7 @@ Por isso o worker nunca autenticou: falava com o servidor errado (onde a conta n
 `POST https://pokeidle.io/auth/entrar` com `{id, senha, turnstileToken:<token 2captcha>, dispositivo}`
 → **HTTP 200**:
 ```
-{"nick":"trembebe","token":"<REDACTED>","provedor":"local","precisaNick":false,"termosVersao":"2026-10-12"}
+{"nick":"<REDACTED-NICK>","token":"<REDACTED>","provedor":"local","precisaNick":false,"termosVersao":"2026-10-12"}
 ```
 O `turnstileToken` foi resolvido pelo `TurnstileTaskProxyless` (IP do solver) para a sitekey do
 `pokeidle.io`. **O solver é aceito e o login automático funciona** (`provedor:"local"` = conta nativa).

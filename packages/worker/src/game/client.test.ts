@@ -75,8 +75,8 @@ function tokenComNick(nick: string): string {
   return `${payload}.assinatura`;
 }
 
-const accessInicial = tokenComNick("trembebe");
-const accessNovo = tokenComNick("trembebe-nova");
+const accessInicial = tokenComNick("treino-fake");
+const accessNovo = tokenComNick("treino-fake-nova");
 const tokensIniciais: Tokens = { accessToken: accessInicial, refreshToken: "refresh-1" };
 const tokensNovos: Tokens = { accessToken: accessNovo, refreshToken: "refresh-2" };
 
@@ -87,7 +87,7 @@ let cliente: GameClient | null = null;
 
 function criarAuth(): AuthJogo & { getTokens: Mock; invalidar: Mock; adotar: Mock; nick: Mock } {
   let atuais = tokensIniciais;
-  let nickAtual: string | null = "trembebe";
+  let nickAtual: string | null = "treino-fake";
   return {
     getTokens: vi.fn(async () => atuais),
     invalidar: vi.fn(async () => {
@@ -147,7 +147,7 @@ describe("GameClient: handshake e eventos", () => {
     await vi.waitFor(() =>
       expect(conexao.mensagens[0]).toMatchObject({
         t: "hello",
-        nick: "trembebe",
+        nick: "treino-fake",
         delta: 1,
         dispositivo: "disp-1",
       }),
@@ -567,18 +567,33 @@ describe("GameClient: política de reconexão (fake timers)", () => {
     );
   });
 
-  it("abrir sem nenhuma mensagem não zera o backoff; mensagem do servidor zera", async () => {
+  it("só o welcome zera o backoff (pong/erro não zeram)", async () => {
     const c = clienteFalso();
     await iniciar(c);
     for (const [indice, atraso] of [1_500, 3_000, 6_000].entries()) {
       sockets[indice]!.abrir();
+      sockets[indice]!.receber({ t: "pong" });
       sockets[indice]!.fechar(1011);
       await esperarSocket(indice + 2, atraso);
     }
     sockets[3]!.abrir();
-    sockets[3]!.receber({ t: "pong" });
+    sockets[3]!.receber({ t: "welcome", estado: {} });
     sockets[3]!.fechar(1011);
     await esperarSocket(5, 1_500);
+  });
+
+  it("recusas/erros seguidos antes do welcome escalam o backoff (não resetam)", async () => {
+    auth.invalidar.mockRejectedValue(new AuthAdiadaError("renovação adiada"));
+    const c = clienteFalso();
+    await iniciar(c);
+    for (const [indice, atraso] of [1_500, 3_000, 6_000, 12_000, 24_000].entries()) {
+      sockets[indice]!.abrir();
+      sockets[indice]!.receber(
+        indice % 2 === 0 ? { t: "erro", msg: "token recusado" } : { t: "erro", chave: "algo.desconhecido" },
+      );
+      await esperarSocket(indice + 2, atraso);
+    }
+    expect(health.snapshot().state).not.toBe("needs-login");
   });
 
   it("erro no handshake com renovação adiada reconecta com backoff e pode invalidar de novo", async () => {
