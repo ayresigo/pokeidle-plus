@@ -20,16 +20,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-12)
 
 **Core value:** As contas do jogador farmam sozinhas no Poke Idle World, 24 horas por dia, sem intervenção manual, sem ban e sem cair em `needs-login`.
-**Current focus:** Milestone v1.1 Farm autônomo — Phase 3 entregue (v0.0.1-beta.2 no ar); Phase 1 (validação real) e Phase 2 (autoplay) em discussão em paralelo, cada uma na sua worktree
+**Current focus:** Milestone v1.1 Farm autônomo — Phase 01.1 (migrar worker para pokeidle.io) inserida e prioritária; Phase 1 parcialmente executada (achados na branch validacao-real); Phase 2 com plano a refazer após a 01.1; Phase 3 entregue
 
 ## Current Position
 
-Phase: 1 of 3 (Validação com conta real) — discussão em andamento (worktree validacao-real); Phase 2 em discussão (worktree autoplay)
+Phase: 01.1 (Migrar worker para pokeidle.io, INSERTED) — a planejar em worktree nova a partir da branch ayresigo/validacao-real
 Plan: Not started
-Status: Discussing
-Last activity: 2026-10-12 — Phase 3 (página raiz) concluída e publicada em https://pokeidle.ayresigo.dev/ (release v0.0.1-beta.2)
+Status: Ready to plan
+Last activity: 2026-10-12 — VAL-01 revelou que o jogo real é pokeidle.io (não poke.idleworld.online); reescrita não revisada do worker congelada na branch validacao-real; Phase 01.1 inserida
 
-Progress: [███░░░░░░░] 33% (1 de 3 fases)
+Progress: [██░░░░░░░░] 25% (1 de 4 fases)
 
 ## Performance Metrics
 
@@ -60,14 +60,18 @@ O log completo fica em PROJECT.md (Key Decisions, D-01..D-15). As mais recentes 
 - [Roadmap v1.1]: as políticas do autoplay (hunt, compras, vendas, horários, eventos) não estão decididas; saem do `/gsd-discuss-phase 2` com o usuário
 - [Roadmap v1.1]: a persistência do estado desejado do supervisor (SUP-01/SUP-02) entrou na Phase 2 por ser necessária para 24 h autônomas
 
+### Roadmap Evolution
+
+- Phase 01.1 inserted after Phase 1: Migrar worker para pokeidle.io (URGENT). O jogo real é `https://pokeidle.io`; todo o worker e o GAME.md tinham sido feitos sobre `poke.idleworld.online`. A reescrita feita pela validação (branch `ayresigo/validacao-real`, `9750cd8`/`06341ed`) é o ponto de partida, mas só entra na main revisada pela 01.1. A Phase 2 depende agora da 01.1 e será replanejada no que depende de protocolo (as 26 decisões de produto seguem válidas).
+
 ### Pending Todos
 
 None yet.
 
 ### Blockers/Concerns
 
-- [Phase 1]: precisa de uma conta real do Poke Idle World fornecida pelo usuário (e chave de solver 2captcha-compatível para testar VAL-01). Sem ela a fase não executa.
-- [Phase 2]: a execução contra o jogo real depende dos achados da Phase 1. Um 4007 sem `cmid` ou o token do solver recusado obrigam a replanejar.
+- [Phase 01.1]: parte de código não revisado; robustez removida sem verificação (close codes, reciclagem, backoff de manutenção, invalidar 1×/5 min) precisa ser restaurada/adaptada ou removida com evidência.
+- [Phase 2]: o plano atual (branch ayresigo/autoplay) usa endpoints do servidor errado; replanejar após a 01.1.
 - [Phase 1/2]: uma sessão viva por conta (4005). Smoke e run de 24 h não podem usar a mesma conta ao mesmo tempo.
 - [Phase 3]: o deploy no `tcgreaper` (`kubectl apply`) exige confirmação explícita do usuário.
 - [Todas]: regra de segurança Docker obrigatória (PROJECT.md, Constraints). Nada de prune nem remoção por filtro/`xargs`; remover só por nome exato o que a tarefa criou. Repassar a regra a todo subagente que tocar em Docker.
@@ -88,6 +92,6 @@ Itens reconhecidos e carregados para depois (detalhe na seção Backlog do ROADM
 ## Session Continuity
 
 Last session: 2026-10-12
-Stopped at: Phase 3 entregue e publicada (v0.0.1-beta.2); Phases 1 e 2 em discussão nas worktrees validacao-real e autoplay
+Stopped at: Phase 01.1 inserida após VAL-01 (jogo real = pokeidle.io); validacao-real congelada; autoplay aguardando
 Resume file: None
-Next: terminar `/gsd-discuss-phase 1` e `/gsd-plan-phase 1` (worktree validacao-real) e `/gsd-discuss-phase 2` (worktree autoplay)
+Next: `/gsd-discuss-phase 01.1` e `/gsd-plan-phase 01.1` numa worktree nova a partir de `ayresigo/validacao-real` (com merge da main)
