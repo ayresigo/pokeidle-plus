@@ -2,6 +2,8 @@
 
 Data da pesquisa: 2026-10-11. Documento de referência para o game loop do worker (Task 19). Toda afirmação factual tem a fonte ao lado. O que não foi confirmado está na seção **Desconhecido**.
 
+> ⚠ **ATENÇÃO (2026-10-12, Fase 1 — validação real):** o jogo que o usuário joga é **`https://pokeidle.io`**, NÃO `poke.idleworld.online`. Todo este documento (e o código atual do worker) descreve `poke.idleworld.online`, que é **outro deployment/protocolo** e por isso o worker nunca autenticou contra a conta real. O servidor real usa `POST /auth/entrar` com `{id, senha, turnstileToken, dispositivo}`, sitekey dinâmica em `GET /auth/provedores`, token Bearer único e WebSocket raw em `wss://pokeidle.io`. O **login automático via solver 2captcha foi CONFIRMADO** no `pokeidle.io` (HTTP 200). Mapa completo e divergências em `.planning/phases/phase-1-validacao-com-conta-real/EVIDENCE.md` (VAL-01). Adaptar o worker ao `pokeidle.io` é a correção central da Fase 1 (ver §9.1).
+
 ## 1. Qual jogo é o alvo
 
 Existem vários jogos com nome parecido. O alvo deste projeto é **Poke Idle World** ("The idle Pokémon MMORPG"):
@@ -178,11 +180,11 @@ O que a Task 19 implementou sem conta real e precisa ser confirmado em smoke man
 - **Validade do access token**: o agendamento usa o `exp` do JWT com 60 s de margem (piso de 30 s entre refreshes); confirmar que o access é JWT com `exp`. Se não for, não há renovação proativa: o game client chama `AuthManager.invalidar()` quando o jogo recusar o token.
 - **Contas com 2FA** não são suportadas pelo login automático (`twoFactor` na resposta → needs-login).
 
-**Resultado do smoke (2026-10-12, conta descartável, IP local):**
-- **Solver aceito pelo jogo? → CONFIRMADO.** Sondas diretas a `POST /api/auth/login` isolaram captcha vs credencial: sem `captchaToken` → `400` "Confirmação anti-robô ausente"; `captchaToken` inválido → `400` "Falha na verificação anti-robô"; `captchaToken` **válido do `TurnstileTaskProxyless`** (IP do 2captcha) → **passa do anti-robô** e cai em `401` "Email ou senha incorretos". Logo o token do solver É aceito (sem bind de `remoteip`). **Login automático via solver é viável** para contas com login nativo e-mail+senha. Evidência: `.planning/phases/phase-1-validacao-com-conta-real/EVIDENCE.md` (VAL-01).
-- **Backend exige captcha em todo login? → CONFIRMADO (sim).** Login sem `captchaToken` → `400`.
-- **Turnstile usa action/cData? → NÃO.** `turnstile.render(el, {sitekey, theme, callback, "expired-callback"})` (chunk `3aqjofv7-1o3x.js`, 2026-10-12); sitekey `0x4AAAAAADkKBnFEMDt0MGBM` ainda atual. Por isso o `TurnstileTaskProxyless` (só sitekey+URL) basta.
-- **Bloqueio observado = credencial (não captcha nem headers).** O `401` persiste com a credencial de teste mesmo com headers de navegador e com token válido fresco. Descartados: hash de senha no cliente (o bundle envia `password` cru), `remoteip`/`action`/`cData`, e conta Google (o usuário confirmou conta nativa). A senha é transmitida byte-a-byte (sha256 confere). Logo a string de senha que o backend aceita difere da fornecida (provável autofill do navegador ≠ valor digitado). O worker cai em `needs-login` com `lastError` claro, sem loop (correto). Pendente: credencial nativa exata; nenhuma correção de código indicada.
+**Resultado do smoke (2026-10-12) — ATENÇÃO: feito contra o servidor REAL `pokeidle.io` (ver banner no topo):**
+- **Solver aceito pelo jogo? → CONFIRMADO (no `pokeidle.io`).** `POST https://pokeidle.io/auth/entrar` com `{id, senha, turnstileToken:<token do `TurnstileTaskProxyless`>, dispositivo}` → **HTTP 200** `{nick, token, provedor:"local", precisaNick, termosVersao}`. O token do solver (IP do 2captcha) é aceito; sem bind de `remoteip`. **Login automático via solver é viável.**
+- **Backend exige captcha em todo login? → CONFIRMADO (sim).** `turnstileToken` inválido → `400 {"erro":"login.turnstileFalhou"}`.
+- **Turnstile usa action/cData? → NÃO.** `turnstile.render(el, {sitekey, size:"flexible"})`; sitekey **dinâmica** `0x4AAAAAAEccJgXg19_AZoDr` via `GET /auth/provedores.turnstile` (não hardcoded). Logo o `TurnstileTaskProxyless` basta, mas a sitekey deve ser lida de `/auth/provedores`.
+- **Divergência central (→ VAL-07):** o worker aponta para `poke.idleworld.online` (`/api/auth/login`, campos `identifier/password/captchaToken`, sitekey `0x4AAAAAAD...`), servidor DIFERENTE do real. Por isso o 401 "Email ou senha incorretos" nas sondas iniciais (conta não existe/difere lá). Adaptar o worker ao `pokeidle.io` (endpoints, campos PT, token Bearer único, `dispositivo`, sitekey dinâmica, WS raw `wss://pokeidle.io`) é a correção central da Fase 1. Mapa completo: EVIDENCE.md (VAL-01).
 
 ### 9.2 Game loop (Task 20)
 
