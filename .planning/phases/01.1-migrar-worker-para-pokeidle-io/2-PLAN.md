@@ -49,19 +49,17 @@ Output: edits cirúrgicos em `auth/` + `config.ts`, com testes ao nível do v1.0
 </context>
 
 <tasks>
-
-<task type="human" tdd="false">
-  <name>Task 0: Fechar o modelo de token (D-S6) — decisão de design</name>
-  <files>(decisão; sem edit)</files>
+<task type="auto" tdd="false">
+  <name>Task 0: Modelo de token — DECIDIDO (D-S6 = opção (a))</name>
+  <files>(decisão registrada; sem edit de design)</files>
   <behavior>
-    Antes de editar, confirmar com o usuário/plan-check a opção de D-S6:
-    (a) manter o par interno `accessToken/refreshToken` (refreshToken = token) e adaptar só a instrução da
-    UI (Plan 4) ao token único; ou (b) colapsar para token único ponta a ponta (schema da central, UI com
-    um campo, config do worker). A escolha define o escopo exato das Tasks abaixo e do Plan 4.
+    D-S6 aprovado = **opção (a)**: manter o par interno `accessToken/refreshToken` no worker
+    (`refreshToken = token`); a UI (Plan 4) passa a pedir o **token único** do pokeidle.io e a extração
+    preenche os dois campos com o mesmo valor. **Nada muda** no schema da central nem na config do worker.
+    Token único ponta a ponta → backlog. Documentar em GAME.md (Plan 1) por que o par é mantido.
   </behavior>
-  <action>Registrar a opção escolhida no SUMMARY. Se (b), incluir no Plan 4 a migração Prisma e o ajuste do
-    endpoint `/accounts/:id/credentials`. Se (a), documentar em GAME.md por que o par é mantido.</action>
-  <done>Opção de token registrada; escopo das demais tasks ajustado.</done>
+  <action>Seguir a opção (a) nas tasks abaixo e no Plan 4; nenhuma migração Prisma nesta fase.</action>
+  <done>Opção (a) fixada; escopo das tasks ajustado (config/worker inalterados no modelo de token).</done>
 </task>
 
 <task type="auto" tdd="true">

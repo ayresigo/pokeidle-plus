@@ -18,6 +18,7 @@ must_haves:
     - "O game loop/WS foi revisado arquivo a arquivo sobre o protocolo real (hello/welcome, hunt.select/campo/batalha/estado, ping/pong)"
     - "A robustez PRESERVADA (backoff+jitter+teto longo, heartbeat, invalidar 1x/5min, watchdog-stall, drain 1000) está confirmada e coberta por teste"
     - "O resíduo de sharding (GAME_WS_SHARDS/djb2) foi removido com evidência; o client usa wss raw"
+    - "Ao receber sessao.renovada, o worker troca o tokenHello em uso E chama health.setTokens (write-back do v1.0, D-S7), coberto por teste com ws local"
     - "Para cada item de robustez de fechamento NÃO observado, há um gap registrado em GAME.md §9 (implementação gated vai para o Plan 6)"
   artifacts:
     - path: "packages/worker/src/game/client.ts"
@@ -88,6 +89,23 @@ Output: edits em `game/` + `config.ts` (limpeza de sharding), testes confirmando
   <done>Cada item preservado tem teste reproduzindo-o; divergências corrigidas; client verde.</done>
 </task>
 
+<task type="auto" tdd="true">
+  <name>Task 2b: sessao.renovada → troca o token em uso + health.setTokens (D-S7)</name>
+  <files>packages/worker/src/game/client.ts, packages/worker/src/game/client.test.ts</files>
+  <behavior>
+    Hoje `aoReceber` case `sessao.renovada` só atualiza `this.tokenHello`. Passa a, quando `m.token` é string
+    não-vazia: (1) atualizar `tokenHello` (token em uso no próximo handshake) e (2) chamar
+    `this.opcoes.health.setTokens({accessToken: m.token, refreshToken: m.token})` (par = mesmo token, D-S6
+    opção (a)). Isso faz o supervisor do control-plane propagar via `PUT /accounts/:id/tokens` (write-back
+    que já existe desde o v1.0: `supervisor.ts` `verificarTokens`/`onTokensRenovados`; `health.snapshot()`
+    expõe `tokens` só quando diferem do inicial via `renewedTokens()`). Não mexer no `AuthManager`.
+  </behavior>
+  <action>Editar o case `sessao.renovada` em client.ts; teste em client.test.ts com servidor ws local
+    (ou socket fake) enviando `{t:"sessao.renovada", token:"<novo>"}` e verificando que `health.setTokens`
+    recebeu o novo valor e que `snapshot().tokens` passa a expô-lo. Sem comentários em linhas de código.</action>
+  <verify><automated>pnpm --filter @pokeidle/worker test client health</automated></verify>
+  <done>sessao.renovada troca o token em uso e publica via health.setTokens; coberto por teste; client/health verdes.</done>
+</task>
 <task type="auto" tdd="true">
   <name>Task 3: Confirmar o loop (garantir-hunt + watchdog-stall) e o drain</name>
   <files>packages/worker/src/game/loop.ts, packages/worker/src/game/loop.test.ts</files>

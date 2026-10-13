@@ -78,15 +78,23 @@ Fora do escopo (fixado pelo roadmap / decisões):
   item é **preservado** — a fase apenas **verifica + cobre com teste**, não restaura. O plano trata cada
   item pela realidade do código, não pela lista.
 
-### Modelo de token (ponto de design a aprovar)
-- **D-S6 (a decidir no plan-check / com o usuário):** o `pokeidle.io` emite **um único token Bearer**
+### Modelo de token (DECIDIDO — opção (a))
+- **D-S6 (aprovado pelo usuário, 2026-10-13 — opção (a)):** o `pokeidle.io` emite **um único token Bearer**
   (`/auth/entrar` → `{token}`), guardado no navegador (localStorage), e renova pelo WS (`sessao.renovada`),
-  sem endpoint REST de refresh. O worker hoje mantém uma interface de **par** `accessToken/refreshToken`
-  fingindo `refreshToken = token` e `renovarTokens()` sempre lança `RefreshNaoSuportadoError`. Duas opções,
-  decididas no plano: (a) **manter o par interno** e adaptar só a instrução da UI para o token único
-  (menor blast radius); (b) **colapsar para token único** ponta a ponta (schema da central, UI com um
-  campo, config do worker) — cutover mais limpo, porém com migração Prisma em colunas criptografadas.
-  O plano registra o tradeoff; a execução segue a opção aprovada.
+  sem endpoint REST de refresh. **Decisão: manter o par interno** `accessToken/refreshToken` no worker
+  (`refreshToken = token`); a **UI passa a pedir o token único** do pokeidle.io e o worker/extração preenche
+  os dois campos com o mesmo valor. Menor blast radius; nada muda no schema da central nem na config do
+  worker. **Token único ponta a ponta** (schema da central com um campo, UI com um campo, config) vai para o
+  **backlog** (ver Deferred).
+
+### Write-back do token renovado (DECIDIDO — escopo v1.0, não Phase 2)
+- **D-S7 (coordenador, 2026-10-13):** ao receber `sessao.renovada`, o worker **troca o token em uso**
+  (`tokenHello`) **e chama `health.setTokens({accessToken: token, refreshToken: token})`**. O write-back à
+  central **já existe desde o v1.0**: o supervisor do control-plane lê `tokens` do `/health`
+  (`supervisor.ts` `verificarTokens`/`onTokensRenovados`) e faz `PUT /accounts/:id/tokens`. Logo isto é
+  **escopo desta fase (wave 3)**, não Phase 2 — com teste usando servidor ws local. (A renovação proativa
+  por `exp` no `AuthManager` continua levando a re-login via solver quando o access expira sem um
+  `sessao.renovada` recente.)
 
 ## Existing Code Insights
 
@@ -162,8 +170,9 @@ Na MESMA sessão de smoke, sem comprar/vender/curar nem gastar gold (cobre o 6-P
 Hard limit: nenhuma ação paga; o que exigir gasto fica marcado não-observável e vai para a Phase 2.
 
 ## Deferred Ideas
-- Token único ponta a ponta na central (se D-S6 escolher manter o par interno agora): backlog/Phase 2.
-- Write-back do token renovado por `sessao.renovada` à central (SUP-02): Phase 2.
+- **Token único ponta a ponta na central** (schema com um campo, UI com um campo, config do worker): backlog
+  (D-S6 = opção (a) aprovada — mantém o par interno nesta fase).
+- (Write-back do token renovado por `sessao.renovada` → movido para a wave 3 desta fase, D-S7; não é mais Phase 2.)
 - Políticas de autoplay, rotina, Modo Soneca como comportamento autônomo: Phase 2 (AUTO-*).
 - Backoff escalonado de manutenção, se o smoke não observar um sinal próprio de manutenção: gap documentado.
 
