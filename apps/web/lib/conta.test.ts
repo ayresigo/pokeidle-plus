@@ -130,28 +130,43 @@ describe("tokensPreenchidos", () => {
 describe("extrairTokens", () => {
   const esperado = { ok: true, tokens: { accessToken: "aaa.bbb.ccc", refreshToken: "rrr" } };
 
-  it("aceita o JSON puro", () => {
+  it("aceita o token único e preenche os dois campos", () => {
+    expect(extrairTokens("aaa.bbb.ccc")).toEqual({
+      ok: true,
+      tokens: { accessToken: "aaa.bbb.ccc", refreshToken: "aaa.bbb.ccc" },
+    });
+  });
+
+  it("tira espaços e aspas do token único", () => {
+    expect(extrairTokens('  "aaa.bbb.ccc" \n')).toEqual({
+      ok: true,
+      tokens: { accessToken: "aaa.bbb.ccc", refreshToken: "aaa.bbb.ccc" },
+    });
+  });
+
+  it("aceita o JSON antigo por compatibilidade", () => {
     expect(extrairTokens('{"accessToken":"aaa.bbb.ccc","refreshToken":"rrr"}')).toEqual(esperado);
   });
 
-  it("aceita a saída do console com aspas simples", () => {
+  it("aceita o JSON antigo com aspas simples do console", () => {
     expect(extrairTokens(`  '{"accessToken":"aaa.bbb.ccc","refreshToken":"rrr"}'\n`)).toEqual(esperado);
   });
 
-  it("aceita string JSON escapada", () => {
+  it("aceita o JSON antigo escapado", () => {
     expect(extrairTokens(JSON.stringify('{"accessToken":"aaa.bbb.ccc","refreshToken":"rrr"}'))).toEqual(esperado);
   });
 
-  it("ignora chaves extras", () => {
+  it("ignora chaves extras do JSON antigo", () => {
     expect(extrairTokens('{"accessToken":"aaa.bbb.ccc","refreshToken":"rrr","user":{"id":1}}')).toEqual(esperado);
   });
 
-  it("dá erro claro para entrada inválida", () => {
-    expect(extrairTokens("")).toEqual({ ok: false, erro: "cole o conteúdo de pokeweb:tokens" });
-    expect(extrairTokens("null")).toMatchObject({ ok: false, erro: expect.stringMatching(/objeto/) });
-    expect(extrairTokens("{accessToken: x}")).toMatchObject({ ok: false, erro: expect.stringMatching(/JSON válido/) });
-    expect(extrairTokens('{"accessToken":"a"}')).toEqual({ ok: false, erro: "refreshToken ausente no JSON" });
-    expect(extrairTokens('{"refreshToken":"r"}')).toEqual({ ok: false, erro: "accessToken ausente no JSON" });
-    expect(extrairTokens('["a","b"]')).toEqual({ ok: false, erro: "accessToken ausente no JSON" });
+  it("dá erro claro para entrada vazia", () => {
+    expect(extrairTokens("")).toEqual({ ok: false, erro: "cole o token do pokeidle.io" });
+    expect(extrairTokens("   \n")).toEqual({ ok: false, erro: "cole o token do pokeidle.io" });
+  });
+
+  it("cobra os dois campos quando o JSON antigo vem incompleto", () => {
+    expect(extrairTokens('{"accessToken":"a"}')).toEqual({ ok: false, erro: "refreshToken ausente no JSON colado" });
+    expect(extrairTokens('{"refreshToken":"r"}')).toEqual({ ok: false, erro: "accessToken ausente no JSON colado" });
   });
 });

@@ -24,7 +24,7 @@ const PAGINA = `<!doctype html>
 </head>
 <body>
 <h1>PokeIdle Plus</h1>
-<p class="lead">Rode várias contas do Poke Idle World no seu PC, cada uma em um container próprio, controladas por um painel web local. Esta é apenas a central de contas e releases do projeto.</p>
+<p class="lead">Rode várias contas do <a href="https://pokeidle.io" rel="noopener">pokeidle.io</a> no seu PC, cada uma em um container próprio, controladas por um painel web local. Esta é apenas a central de contas e releases do projeto.</p>
 
 <div class="aviso">
   <strong>Aviso:</strong> automatizar contas pode violar os Termos de Uso do jogo e levar a banimento. Use por sua conta e risco.

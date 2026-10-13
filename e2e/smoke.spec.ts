@@ -8,7 +8,7 @@ import {
   registrarWorker,
   saudeDoContainer,
 } from "./docker.ts";
-import { ACCESS_TOKEN_VALIDO, REFRESH_TOKEN_E2E } from "./fake-game/token.ts";
+import { ACCESS_TOKEN_VALIDO } from "./fake-game/token.ts";
 
 const LABEL_CONTA = "conta-e2e";
 const CHANGELOG = "Release de teste do E2E: nada muda de verdade.";
@@ -37,16 +37,14 @@ test("login na UI leva ao dashboard", async () => {
   await expect(page.getByText("nenhuma conta cadastrada")).toBeVisible();
 });
 
-test("cria conta pelo form colando o JSON de tokens", async () => {
+test("cria conta pelo form colando o token do pokeidle.io", async () => {
   await page.getByRole("link", { name: "Nova conta" }).click();
   await expect(page.getByRole("heading", { name: "Nova conta" })).toBeVisible();
   await page.getByLabel("Nome da conta").fill(LABEL_CONTA);
   await page.getByLabel("Usuário PokeIdle").fill("treinador-e2e");
   await page.getByLabel("Senha PokeIdle").fill("senha-pokeidle-e2e");
-  await page
-    .getByLabel("JSON de pokeweb:tokens")
-    .fill(JSON.stringify({ accessToken: ACCESS_TOKEN_VALIDO, refreshToken: REFRESH_TOKEN_E2E }));
-  await expect(page.getByText("tokens extraídos do JSON")).toBeVisible();
+  await page.getByLabel("Token do pokeidle.io").fill(ACCESS_TOKEN_VALIDO);
+  await expect(page.getByText("token aplicado")).toBeVisible();
   await expect(page.getByLabel("accessToken")).toHaveValue(ACCESS_TOKEN_VALIDO);
   await page.getByRole("button", { name: "Criar conta" }).click();
 
@@ -78,7 +76,7 @@ test("logs mostram linhas do worker", async () => {
   await expect(painel).toBeHidden();
 });
 
-test("kick 4005 do jogo leva a precisa de login com CTA de colar tokens", async () => {
+test("kick do jogo (sessão revogada) leva a precisa de login com CTA de colar tokens", async () => {
   const resposta = await fetch(`${URL_FAKE_GAME}/__e2e/kick`, { method: "POST" });
   expect(resposta.ok).toBe(true);
   expect(await resposta.json()).toEqual({ fechados: 1 });
