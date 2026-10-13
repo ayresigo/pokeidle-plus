@@ -179,8 +179,10 @@ O que a Task 19 implementou sem conta real e precisa ser confirmado em smoke man
 - **Contas com 2FA** não são suportadas pelo login automático (`twoFactor` na resposta → needs-login).
 
 **Resultado do smoke (2026-10-12, conta descartável, IP local):**
-- **Solver aceito pelo jogo? → REFUTADO.** Em 3 tentativas, `POST /api/auth/login` com `captchaToken` resolvido no 2captcha devolveu `HTTP 401` ("Email ou senha incorretos"), com credenciais comprovadamente válidas no navegador. O diferencial é a origem do token (IP do solver ≠ IP do worker), consistente com validação de `remoteip` no siteverify. O worker cai em `needs-login` com `lastError` claro, sem loop (comportamento correto). Por isso, **tokens colados (`pokeweb:tokens`) são o caminho de login principal** (D-02). Evidência: `.planning/phases/phase-1-validacao-com-conta-real/EVIDENCE.md` (VAL-01).
-- **Turnstile sempre ligado / backend exige captcha? → NÃO-OBSERVÁVEL pelo worker** (ele sempre envia `captchaToken`); indício indireto de que o captcha é exigido (o do solver não passou).
+- **Solver aceito pelo jogo? → CONFIRMADO.** Sondas diretas a `POST /api/auth/login` isolaram captcha vs credencial: sem `captchaToken` → `400` "Confirmação anti-robô ausente"; `captchaToken` inválido → `400` "Falha na verificação anti-robô"; `captchaToken` **válido do `TurnstileTaskProxyless`** (IP do 2captcha) → **passa do anti-robô** e cai em `401` "Email ou senha incorretos". Logo o token do solver É aceito (sem bind de `remoteip`). **Login automático via solver é viável** para contas com login nativo e-mail+senha. Evidência: `.planning/phases/phase-1-validacao-com-conta-real/EVIDENCE.md` (VAL-01).
+- **Backend exige captcha em todo login? → CONFIRMADO (sim).** Login sem `captchaToken` → `400`.
+- **Turnstile usa action/cData? → NÃO.** `turnstile.render(el, {sitekey, theme, callback, "expired-callback"})` (chunk `3aqjofv7-1o3x.js`, 2026-10-12); sitekey `0x4AAAAAADkKBnFEMDt0MGBM` ainda atual. Por isso o `TurnstileTaskProxyless` (só sitekey+URL) basta.
+- **Bloqueio observado = credencial, não captcha.** O `401` veio com credenciais da conta de teste (provável conta **Google** sem senha nativa, ou senha nativa divergente). O worker cai em `needs-login` com `lastError` claro, sem loop (correto). Para o login automático, usar conta com e-mail+senha nativos; contas só-Google não têm senha para o endpoint nativo (automação do OAuth Google está fora do escopo).
 
 ### 9.2 Game loop (Task 20)
 
