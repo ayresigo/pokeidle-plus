@@ -128,3 +128,30 @@ mais leitura read-only do bundle `https://pokeidle.io/app.js`. Nada pago. Sem se
 ### `sessao.renovada` (I1) — do bundle
 - `{t:'sessao.renovada', token}` → o cliente guarda o novo token (`s.token = m.token; guardarSessao`). É o que
   impede a sessão longa de cair no login na próxima queda. O worker deve **adotar** esse token (auth + health).
+
+---
+
+## Smoke real do worker corrigido (conta descartável, 2026-10-13)
+
+Rodado o worker REAL (módulos `criarAuthManager`/`criarGameClient`/`runGameLoop`/`drenar`) contra
+`https://pokeidle.io`, conta descartável `smoke-descartavel`. Só leitura de progresso; **nada pago**
+(sem compra/venda/cura). Segredos não impressos (tokens omitidos; só `state`/`kills`/`lastError`).
+
+### Smoke ponta-a-ponta (MIG-06 / SC5) — CONFIRMADO
+- **Auth via solver → ok.** `state` foi a `in-game` (login `/auth/entrar` + `turnstileToken` do 2captcha).
+- **Hunt (C1) → CONFIRMADO.** `huntAlvo=bellsprout`, `hunt=bellsprout`; `lastAction` alternou entre
+  `garantir-hunt: em hunt bellsprout` e `watchdog-stall: hunt bellsprout ativa` (watchdog **não** disparou à toa).
+- **Kills reais → CONFIRMADO.** Contador subiu **0 → 23 em ~66 s** (`morte Bellsprout`), `lastError=null` o tempo todo.
+- **Drain → CONFIRMADO.** `drenar(...)` → `acaoConcluida=true`, fechamento limpo (close 1000), sem erro, processo encerra.
+- **nick (N3):** hello enviado com `corpo.nick` do login; conexão aceita.
+
+### VAL-05 (farm offline) — REFUTADO sem soneca
+- Duas leituras read-only do mesmo token com 60 s **offline** (sessão fechada) entre elas:
+  `xp=13138` na sessão 1 e `xp=13138` na sessão 2 → **delta 0**. Online o personagem faz ~0,35 kill/s.
+- **Conclusão:** com `close(1000)` o farm **não** continua offline. O worker farma enquanto **conectado**
+  (modo normal, com reconexão). Farm offline exigiria um comando de soneca do `pokeidle.io` — **não mapeado**
+  no bundle; fica como decisão/mapa da **Phase 2** (D-13). Para a migração, o drain limpo (close 1000) está correto.
+
+### Pendentes (não exercitados neste smoke)
+- VAL-06 `sessao.renovada` ao vivo (precisa de sessão de dias) e close codes 4001/4003/4000 ao vivo
+  (já mapeados pelo bundle `ws.onclose`); forçar 4001 exigiria abrir a conta em outro lugar.

@@ -185,7 +185,12 @@ Compras, vendas, cura, rotina e troca de hunt são **Phase 2 (autoplay)**, fora 
   (coberto por teste); periodicidade ao vivo a observar numa sessão longa.
 - **Renovação transitória vs definitiva → implementado (I3):** falha de rede/5xx/429/timeout do solver ou do
   `/auth/entrar` → transitório (backoff, não needs-login); só 4xx de credencial e `precisaNick` → definitivo.
-- **Farm offline após drain / `sleep-mode` (VAL-05) → PENDENTE (wave 6, smoke).**
+- **Smoke real do worker (MIG-06/SC5) → CONFIRMADO (2026-10-13).** Conta descartável: login via solver →
+  `in-game`, `hunt.select`→`campo.init`, **kills 0→23 em ~66 s** com `lastError=null`, watchdog não disparou,
+  drain `acaoConcluida=true` (close 1000). Nada pago. Evidência: EVIDENCE.md.
+- **Farm offline após drain / `sleep-mode` (VAL-05) → REFUTADO sem soneca (2026-10-13).** Com `close(1000)` o
+  farm **não** avança offline (xp inalterado em 60 s offline). O worker farma enquanto **conectado** (reconexão);
+  farm offline exigiria um comando de soneca do pokeidle.io, **não mapeado** → Phase 2 (D-13). Drain limpo mantido.
 - **Backoff escalonado de manutenção (5/10/15 min) → GAP (wave 6):** só adicionado se o smoke mostrar um
   sinal de manutenção próprio; senão o backoff genérico cobre.
 
