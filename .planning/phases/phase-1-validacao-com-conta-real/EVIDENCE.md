@@ -52,6 +52,12 @@ diferente do digitado, ou há um caractere/charset sutil. Próximo passo de diag
 no DevTools → Network → requisição `login` bem-sucedida → Payload, o valor de `password` enviado
 pelo navegador com `@3228499aS` (mesmo tamanho/caracteres?).
 
+**Mapa de campos do `POST /api/auth/login` (sondas 2026-10-12):** o backend usa
+`{identifier, password, captchaToken}` — exatamente o que o worker envia. Enviar `{id, senha}`
+→ 400 "Informe seu email ou nome de usuário" (campos não lidos). Campo `dispositivo` (UUID) **não
+é exigido**: com token válido + `dispositivo` o resultado continua 401 credencial. Logo o worker
+já envia os campos certos; o pendente é só o valor correto da senha.
+
 **Implicação para o projeto (login automático):** o caminho solver → login **funciona**; o único
 pendente é fornecer a credencial nativa exata que o backend aceita. Nenhuma correção de código é
 indicada por esta evidência (o worker se comporta corretamente).
