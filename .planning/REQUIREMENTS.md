@@ -36,6 +36,17 @@ Fonte: `packages/worker/GAME.md` §9, `.planning/codebase/CONCERNS.md` ("Pontos 
 - [ ] **VAL-06**: Os demais pontos de GAME.md §9 são verificados na mesma sessão: rotação do refreshToken no `/api/auth/refresh`, access token como JWT com `exp`, respostas a `restart-state`/`balls-get` (`restart-freeze`, `balls`), `hunt-resume` + `enter-hunt resume:true` preservando o progresso, e close codes 4005-4009 que aparecerem em produção.
 - [ ] **VAL-07**: Toda divergência entre o comportamento observado e o implementado vira correção em `packages/worker`, coberta por teste (`client.test.ts`/`provider.test.ts`/`loop`) que reproduz o comportamento real, com a suíte verde.
 
+### Migração para pokeidle.io (MIG) — Phase 01.1 (INSERTED)
+
+Fonte: VAL-01 da Phase 1 (`EVIDENCE.md` e banner do `GAME.md` na branch `ayresigo/validacao-real`): o jogo real é `https://pokeidle.io`, não `poke.idleworld.online`.
+
+- [ ] **MIG-01**: `packages/worker/GAME.md` documenta o protocolo do `pokeidle.io` (auth, WS, eventos, comandos, códigos de fechamento observados) como fonte única; o material do `poke.idleworld.online` sai ou fica marcado como histórico.
+- [ ] **MIG-02**: Auth do worker no `pokeidle.io` (`POST /auth/entrar` com `{id, senha, turnstileToken, dispositivo}`, sitekey dinâmica de `GET /auth/provedores`, solver 2captcha, token colado, renovação) revisada, com a robustez do v1.0 preservada (transitório vs definitivo, `invalidar` com teto, sem segredos em log).
+- [ ] **MIG-03**: Game loop do worker no `pokeidle.io` (WS raw, `hello`/`welcome`, `hunt.select`/`campo`/`batalha`/`estado`, ping/pong, kills por `batalha.ev[].k==='morte'`) revisado, com reconexão com teto, tratamento de rejeição de token, sessão substituída, manutenção, reciclagem e watchdog restaurados e adaptados ao comportamento real (ou removidos com evidência).
+- [ ] **MIG-04**: Testes do worker para auth e game loop no nível do v1.0 (reconexão, rejeição, drain, watchdog, com fake timers e servidor ws local), suíte verde.
+- [ ] **MIG-05**: Nenhuma referência funcional a `poke.idleworld.online` no repo: `GAME_URL` padrão do control-plane, instrução de tokens na UI, `e2e/fake-game`, README, página raiz da central; E2E verde.
+- [ ] **MIG-06**: Smoke real na conta descartável (login via solver, `welcome`, kills, drain) + conclusão de VAL-05/VAL-06 e das observações read-only do 6-PLAN da Phase 1 para a Phase 2; release beta com o worker migrado. Nada pago na conta real.
+
 ### Autoplay (AUTO)
 
 As decisões de produto (qual hunt, que bolas e consumíveis comprar e em que quantidade, o que vender, horários, que eventos tratar e como) saem do `/gsd-discuss-phase 2` com o usuário. Os requisitos abaixo fixam só o resultado esperado.
@@ -101,6 +112,12 @@ Reconhecidos, fora do roadmap do v1.1. Ver a seção Backlog do ROADMAP e `.plan
 | VAL-05 | Phase 1 | Pending |
 | VAL-06 | Phase 1 | Pending |
 | VAL-07 | Phase 1 | Pending |
+| MIG-01 | Phase 01.1 | Pending |
+| MIG-02 | Phase 01.1 | Pending |
+| MIG-03 | Phase 01.1 | Pending |
+| MIG-04 | Phase 01.1 | Pending |
+| MIG-05 | Phase 01.1 | Pending |
+| MIG-06 | Phase 01.1 | Pending |
 | AUTO-01 | Phase 2 | Pending |
 | AUTO-02 | Phase 2 | Pending |
 | AUTO-03 | Phase 2 | Pending |

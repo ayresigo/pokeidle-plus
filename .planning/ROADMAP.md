@@ -39,6 +39,7 @@ Etapas concluídas:
 **Milestone Goal:** contas farmando sozinhas por 24 h, sem intervenção, sem ban e sem cair em `needs-login`.
 
 - [ ] **Phase 1: Validação com conta real** - Confirmar em sessão real os pontos de GAME.md §9 e ajustar o worker ao que for observado
+- [ ] **Phase 01.1: Migrar worker para pokeidle.io** (INSERTED) - O jogo real é `pokeidle.io`; revisar a reescrita da validação, restaurar a robustez e tirar `poke.idleworld.online` do repo
 - [ ] **Phase 2: Autoplay** - Comportamento autônomo do bot e supervisão que sobrevive a reinícios, até a run de 24 h
 - [x] **Phase 3: Página raiz da central** - `GET /` em pokeidle.ayresigo.dev responde algo útil em vez do 404 (completed 2026-10-12)
 
@@ -67,9 +68,23 @@ Etapas concluídas:
 - [ ] 4-PLAN.md — Correções no worker gated por evidência (VAL-01..VAL-07)
 - [ ] 5-PLAN.md — Gate final: §9 marcado + suíte do worker verde (VAL-07)
 
+### Phase 01.1: Migrar worker para pokeidle.io (INSERTED)
+**Goal**: O worker funciona contra o jogo que o usuário realmente joga, `https://pokeidle.io`, com a mesma robustez revisada no v1.0, e nenhuma parte do sistema aponta mais para `poke.idleworld.online`.
+**Why inserted**: a validação real (Phase 1, VAL-01) mostrou que todo o worker e o GAME.md foram construídos sobre `poke.idleworld.online`, outro deployment com outro protocolo; o worker nunca autenticaria na conta real. Na worktree `validacao-real` (branch `ayresigo/validacao-real`, commits `9750cd8` e `06341ed`) a auth e o game loop foram reescritos para o `pokeidle.io` e provados com kills reais, mas fora do escopo da fase e sem revisão; parte da robustez foi removida sem verificação. Esta fase parte dessa reescrita, revisa e completa.
+**Depends on**: Phase 1 (achados de VAL-01..VAL-04 em `EVIDENCE.md`/`GAME.md` da branch `ayresigo/validacao-real`)
+**Requirements**: MIG-01, MIG-02, MIG-03, MIG-04, MIG-05, MIG-06
+**Success Criteria** (what must be TRUE):
+  1. `packages/worker/GAME.md` descreve o protocolo do `pokeidle.io` (auth `/auth/entrar` + `/auth/provedores`, WS raw com `hello`/`welcome`, vocabulário `hunt.select`/`campo`/`batalha`/`estado`, ping/pong) como fonte única, com o material do `poke.idleworld.online` removido ou marcado como histórico.
+  2. A reescrita da auth e do game loop está revisada; a robustez removida sem verificação (rejeição de token com `invalidar` no máximo 1×/5 min e retry; sessão substituída → `needs-login` sem reconectar; manutenção com backoff escalonado; limites de IP/máquina; reciclagem com teto; watchdog de stall com teto) está restaurada e adaptada ao comportamento real do `pokeidle.io`, ou removida com evidência registrada.
+  3. A cobertura de testes do worker volta ao nível do v1.0 para auth e game loop (cenários de reconexão, rejeição, drain e watchdog com fake timers), com suíte verde.
+  4. Nenhuma referência funcional a `poke.idleworld.online` sobra no repo: `GAME_URL` padrão do control-plane, instrução de colar tokens na UI (formato real do `pokeidle.io`), `e2e/fake-game` imitando o protocolo do `pokeidle.io`, README e página raiz da central.
+  5. Smoke real na conta descartável: login via solver, `welcome`, kills subindo, drain limpo; VAL-05 (farm offline/`sleep-mode`) e VAL-06 (re-login/refresh) concluídos; as observações read-only do 6-PLAN da Phase 1 (fontes do dashboard, formatos de eventos, cura/potions, catálogos) registradas para a Phase 2. Nada pago na conta real.
+  6. E2E (`pnpm e2e`) verde contra o fake-game novo, e uma release beta publicada com o worker migrado.
+**Plans**: TBD (run `/gsd-plan-phase 01.1`)
+
 ### Phase 2: Autoplay
 **Goal**: As contas do jogador farmam sozinhas por 24 h: o bot caça, repõe pokébolas e consumíveis, vende loot, segue uma rotina e reage aos eventos do jogo, e a supervisão sobrevive a reinícios. As políticas concretas (hunt, compras, vendas, horários, eventos) são decididas com o usuário no `/gsd-discuss-phase 2`.
-**Depends on**: Phase 1 (só para executar contra o jogo real; discussão, planejamento e SUP-01/SUP-02 podem andar em paralelo)
+**Depends on**: Phase 01.1 (o plano atual da branch `ayresigo/autoplay` foi feito sobre o protocolo do servidor errado; mantém as 26 decisões de produto do `02-CONTEXT.md` e é replanejado após a 1.1 só no que depende de endpoints/protocolo)
 **Requirements**: AUTO-01, AUTO-02, AUTO-03, AUTO-04, AUTO-05, AUTO-06, SUP-01, SUP-02
 **Success Criteria** (what must be TRUE):
   1. Até 4 contas reais do jogador rodam 24 h seguidas sem nenhum clique, sem `needs-login`, `error`, ban ou aviso do jogo, e o relatório da run mostra kills/capturas subindo durante toda a janela.
@@ -98,6 +113,7 @@ Etapas concluídas:
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1. Validação com conta real | v1.1 | 0/6 | Not started | - |
+| 01.1. Migrar worker para pokeidle.io | v1.1 | 0/TBD | Not started | - |
 | 2. Autoplay | v1.1 | 0/TBD | Not started | - |
 | 3. Página raiz da central | v1.1 | 1/1 | Complete    | 2026-10-12 |
 
