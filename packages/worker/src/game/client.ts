@@ -3,7 +3,7 @@ import { AuthAdiadaError } from "../auth/provider.js";
 import { lerExpiracao } from "../auth/refresh.js";
 import type { WorkerConfig } from "../config.js";
 import type { HealthState, Tokens } from "../health.js";
-import { criarDispatcher, criarFetch, descartarCorpo, lerJson, type HttpFetch } from "../http.js";
+import { criarDispatcher } from "../http.js";
 
 export interface AuthJogo {
   getTokens(): Promise<Tokens>;
@@ -14,24 +14,11 @@ export interface EstadoJogo {
   conectadoEm: number | null;
   huntAtual: string | null;
   huntDesde: number | null;
-  huntRetomavel: string | null;
-  huntCooldownAte: number | null;
-  enterHuntEnviadoEm: number | null;
+  huntSelectEnviadoEm: number | null;
   ultimoKillEm: number | null;
   ultimoKill: string | null;
   kills: number;
   capturas: number;
-  balls: number | null;
-  itensInventario: number | null;
-  ultimoAnalyzer: { seconds: number | null; balance: number | null } | null;
-  restartFreeze: { frozenAt: number; restartedAt: number } | null;
-  restartResumeEnviadoEm: number | null;
-}
-
-export interface HuntMapa {
-  slug: string;
-  nome: string;
-  nivel: number;
 }
 
 export interface MotivoEncerramento {
@@ -42,11 +29,7 @@ export interface MotivoEncerramento {
 export interface ClienteJogo {
   readonly conectado: boolean;
   readonly estado: Readonly<EstadoJogo>;
-  enterHunt(slug: string, resume: boolean): void;
-  leaveHunt(): void;
-  restartResume(): void;
-  reciclar(): boolean;
-  buscarHunts(): Promise<HuntMapa[]>;
+  selecionarHunt(slug: string): void;
 }
 
 export interface SocketJogo {
@@ -64,12 +47,12 @@ export type CriarSocket = (url: string, origem: string, ouvintes: OuvintesSocket
 
 export interface OpcoesClient {
   wsUrl: string;
-  shards: number;
   gameUrl: string;
   accountId: string;
+  dispositivo: string;
+  huntSlug: string | undefined;
   auth: AuthJogo;
   health: HealthState;
-  fetch: HttpFetch;
   criarSocket?: CriarSocket;
   random?: () => number;
   reconexao?: { baseMs: number; tetoMs: number };
@@ -79,63 +62,33 @@ export interface OpcoesClient {
 const RECONEXAO_PADRAO = { baseMs: 1_500, tetoMs: 24_000 };
 const FALHAS_ATE_TETO_LONGO = 5;
 const TETO_LONGO_MS = 5 * 60_000;
-const MANUTENCAO_INICIAL_MS = 5 * 60_000;
-const MANUTENCAO_TETO_MS = 15 * 60_000;
-const JITTER_MANUTENCAO = 0.2;
-const INTERVALO_RECICLAGEM_MS = 60_000;
-const ATRASO_MINIMO_RECICLAGEM_MS = 1_000;
-const MAX_RECICLAGENS = 3;
 const HEARTBEAT_PADRAO = { verificarMs: 10_000, silencioMs: 45_000, prazoPingMs: 15_000 };
 const INTERVALO_MINIMO_INVALIDAR_MS = 5 * 60_000;
 const TIMEOUT_DESCONEXAO_MS = 2_000;
-const MARGEM_HUNT_COOLDOWN_MS = 100;
-const WS_AUTH_RECUSADA = 4001;
-const WS_MANUTENCAO = 4003;
-const FECHAMENTOS_TERMINAIS: Record<number, MotivoEncerramento> = {
-  4005: {
-    estado: "needs-login",
-    motivo:
-      "sessão substituída por outro login (WS 4005); sem reconexão para não derrubar o outro acesso",
-  },
-  4006: { estado: "error", motivo: "limite de contas por IP atingido (WS 4006)" },
-  4007: { estado: "error", motivo: "limite de contas por máquina atingido (WS 4007)" },
-  4008: { estado: "needs-login", motivo: "personagem precisa trocar de nome no jogo (WS 4008)" },
-  4009: { estado: "needs-login", motivo: "conta precisa trocar a senha no jogo (WS 4009)" },
-};
 
 function ehRegistro(valor: unknown): valor is Record<string, unknown> {
   return typeof valor === "object" && valor !== null && !Array.isArray(valor);
 }
 
-function lerSub(accessToken: string): string | null {
+function decodificarNick(token: string): string | null {
   try {
-    const payload: unknown = JSON.parse(atob(accessToken.split(".")[1] ?? ""));
-    if (payload === null) return null;
-    return ehRegistro(payload) ? String(payload.sub ?? "") : "";
+    const segmento = token.split(".")[0] ?? "";
+    const payload: unknown = JSON.parse(Buffer.from(segmento, "base64url").toString("utf8"));
+    return ehRegistro(payload) && typeof payload.nick === "string" ? payload.nick : null;
   } catch {
     return null;
   }
 }
 
-export function montarUrlWs(base: string, accessToken: string, shards: number): string {
-  const sub = shards > 1 ? lerSub(accessToken) : null;
-  let url = base;
-  if (sub !== null) {
-    let hash = 5381;
-    for (let i = 0; i < sub.length; i += 1) hash = ((hash << 5) + hash + sub.charCodeAt(i)) | 0;
-    const indice = Math.abs(hash) % shards;
-    if (indice > 0) {
-      const alvo = new URL(base);
-      if (alvo.pathname && alvo.pathname !== "/") {
-        alvo.pathname = `${alvo.pathname.replace(/\/$/, "")}${indice}`;
-      } else {
-        const padrao = alvo.protocol === "wss:" || alvo.protocol === "https:" ? 443 : 80;
-        alvo.port = String(Number(alvo.port || padrao) + indice);
-      }
-      url = alvo.toString().replace(/\/$/, "");
-    }
+function somarDex(dex: Record<string, unknown>): { kills: number; capturas: number } {
+  let kills = 0;
+  let capturas = 0;
+  for (const entrada of Object.values(dex)) {
+    if (!ehRegistro(entrada)) continue;
+    kills += Math.max(0, Math.floor(Number(entrada.k)) || 0);
+    capturas += Math.max(0, Math.floor(Number(entrada.c)) || 0);
   }
-  return `${url}?token=${encodeURIComponent(accessToken)}&v=2`;
+  return { kills, capturas };
 }
 
 export function criarSocketUndici(dispatcher: Dispatcher | undefined): CriarSocket {
@@ -156,34 +109,24 @@ export class GameClient implements ClienteJogo {
     conectadoEm: null,
     huntAtual: null,
     huntDesde: null,
-    huntRetomavel: null,
-    huntCooldownAte: null,
-    enterHuntEnviadoEm: null,
+    huntSelectEnviadoEm: null,
     ultimoKillEm: null,
     ultimoKill: null,
     kills: 0,
     capturas: 0,
-    balls: null,
-    itensInventario: null,
-    ultimoAnalyzer: null,
-    restartFreeze: null,
-    restartResumeEnviadoEm: null,
   };
   private readonly fim = Promise.withResolvers<MotivoEncerramento>();
   private readonly criarSocket: CriarSocket;
   private socket: SocketJogo | null = null;
   private socketFechado: Promise<void> | null = null;
   private aberto = false;
+  private emJogo = false;
   private abrindo = false;
-  private reciclando = false;
   private iniciado = false;
   private final: MotivoEncerramento | null = null;
   private tentativas = 0;
-  private manutencoes = 0;
-  private reciclagens = 0;
-  private ultimaReciclagemEm: number | null = null;
-  private atrasoReciclagem = ATRASO_MINIMO_RECICLAGEM_MS;
-  private ultimoFrozenAt: unknown = null;
+  private tokenHello: string | null = null;
+  private baselineDex: { kills: number; capturas: number } | null = null;
   private ultimaMensagemEm = 0;
   private pingEm = 0;
   private ultimoInvalidarEm: number | null = null;
@@ -196,7 +139,7 @@ export class GameClient implements ClienteJogo {
   }
 
   get conectado(): boolean {
-    return this.aberto;
+    return this.emJogo;
   }
 
   get estado(): Readonly<EstadoJogo> {
@@ -220,6 +163,7 @@ export class GameClient implements ClienteJogo {
     this.socket = null;
     this.socketFechado = null;
     this.aberto = false;
+    this.emJogo = false;
     if (!socket || !fechado) return;
     const prazo = Promise.withResolvers<void>();
     const timer = setTimeout(prazo.resolve, TIMEOUT_DESCONEXAO_MS);
@@ -228,58 +172,9 @@ export class GameClient implements ClienteJogo {
     clearTimeout(timer);
   }
 
-  enterHunt(slug: string, resume: boolean): void {
-    this.enviar({ type: "enter-hunt", slug, resume });
-    this.dados.enterHuntEnviadoEm = Date.now();
-  }
-
-  leaveHunt(): void {
-    this.enviar({ type: "leave-hunt" });
-    this.dados.huntAtual = null;
-    this.dados.huntDesde = null;
-  }
-
-  setCity(slug: string): void {
-    this.enviar({ type: "set-city", slug });
-  }
-
-  restartResume(): void {
-    this.enviar({ type: "restart-resume" });
-    this.dados.restartResumeEnviadoEm = Date.now();
-  }
-
-  reciclar(): boolean {
-    if (!this.socket || !this.aberto) return false;
-    if (this.reciclagens >= MAX_RECICLAGENS) {
-      this.opcoes.health.setLastError(
-        `restart não resolveu após ${MAX_RECICLAGENS} reconexões; aguardando novo restart-freeze do servidor`,
-      );
-      return false;
-    }
-    const agora = Date.now();
-    const liberadoEm = (this.ultimaReciclagemEm ?? -Infinity) + INTERVALO_RECICLAGEM_MS;
-    this.reciclagens += 1;
-    this.atrasoReciclagem = Math.max(ATRASO_MINIMO_RECICLAGEM_MS, liberadoEm - agora);
-    this.ultimaReciclagemEm = agora;
-    this.reciclando = true;
-    this.socket.close(1000, "reciclar");
-    return true;
-  }
-
-  async buscarHunts(): Promise<HuntMapa[]> {
-    const path = "/api/game/map-markers";
-    const resposta = await this.opcoes.fetch(new URL(path, this.opcoes.gameUrl).toString());
-    if (!resposta.ok) {
-      await descartarCorpo(resposta);
-      throw new Error(`HTTP ${resposta.status} em ${path}`);
-    }
-    const corpo = await lerJson(resposta);
-    const hunts: unknown[] = Array.isArray(corpo.hunts) ? corpo.hunts : [];
-    return hunts.flatMap((hunt) => {
-      if (!ehRegistro(hunt) || typeof hunt.slug !== "string" || !hunt.slug) return [];
-      const nome = typeof hunt.name === "string" ? hunt.name : hunt.slug;
-      return [{ slug: hunt.slug, nome, nivel: Number(hunt.level) || 0 }];
-    });
+  selecionarHunt(slug: string): void {
+    this.enviar({ t: "hunt.select", slug });
+    this.dados.huntSelectEnviadoEm = Date.now();
   }
 
   private async invalidarLimitado(): Promise<Tokens | null> {
@@ -322,21 +217,18 @@ export class GameClient implements ClienteJogo {
       this.reconectarComBackoff("access expirado; aguardando renovação dos tokens");
       return;
     }
+    this.tokenHello = tokens.accessToken;
     const fechado = Promise.withResolvers<void>();
-    const socket: SocketJogo = this.criarSocket(
-      montarUrlWs(this.opcoes.wsUrl, tokens.accessToken, this.opcoes.shards),
-      new URL(this.opcoes.gameUrl).origin,
-      {
-        aoAbrir: () => this.aoAbrir(socket),
-        aoReceber: (dados) => {
-          if (this.socket === socket) this.aoReceber(dados);
-        },
-        aoFechar: (codigo) => {
-          fechado.resolve();
-          this.aoFechar(socket, codigo);
-        },
+    const socket: SocketJogo = this.criarSocket(this.opcoes.wsUrl, new URL(this.opcoes.gameUrl).origin, {
+      aoAbrir: () => this.aoAbrir(socket),
+      aoReceber: (dados) => {
+        if (this.socket === socket) this.aoReceber(dados);
       },
-    );
+      aoFechar: (codigo) => {
+        fechado.resolve();
+        this.aoFechar(socket, codigo);
+      },
+    });
     this.socket = socket;
     this.socketFechado = fechado.promise;
   }
@@ -346,68 +238,42 @@ export class GameClient implements ClienteJogo {
     const agora = Date.now();
     this.abrindo = false;
     this.aberto = true;
+    this.emJogo = false;
     this.ultimaMensagemEm = agora;
     this.pingEm = 0;
-    Object.assign(this.dados, {
-      conectadoEm: agora,
-      huntAtual: null,
-      huntDesde: null,
-      huntRetomavel: null,
-      huntCooldownAte: null,
-      enterHuntEnviadoEm: null,
-      restartFreeze: null,
-      restartResumeEnviadoEm: null,
+    Object.assign(this.dados, { huntAtual: null, huntDesde: null, huntSelectEnviadoEm: null });
+    const nick = this.tokenHello ? decodificarNick(this.tokenHello) : null;
+    this.enviar({
+      t: "hello",
+      nick: nick ?? "",
+      token: this.tokenHello ?? "",
+      delta: 1,
+      dispositivo: this.opcoes.dispositivo,
     });
-    this.opcoes.health.setState("in-game");
-    this.opcoes.health.setLastError(null);
-    this.opcoes.health.setLastAction("conectado ao jogo");
-    this.enviar({ type: "restart-state" });
-    this.enviar({ type: "balls-get" });
     this.armarHeartbeat(socket);
   }
 
   private aoFechar(socket: SocketJogo, codigo: number): void {
     if (this.socket !== socket) return;
-    const reciclando = this.reciclando;
     this.socket = null;
     this.socketFechado = null;
     this.aberto = false;
+    this.emJogo = false;
     this.abrindo = false;
-    this.reciclando = false;
     clearInterval(this.timerHeartbeat);
     if (this.final) return;
-    if (codigo === WS_AUTH_RECUSADA) {
-      void this.tratarAuthRecusada();
-      return;
-    }
-    const terminal = FECHAMENTOS_TERMINAIS[codigo];
-    if (terminal) {
-      this.encerrar(terminal);
-      return;
-    }
-    if (reciclando) {
-      this.opcoes.health.setLastAction("reciclando a conexão com o jogo");
-      this.timerReconexao = setTimeout(() => void this.abrir(), this.atrasoReciclagem);
-      return;
-    }
-    if (codigo === WS_MANUTENCAO) {
-      this.manutencoes += 1;
-      const base = Math.min(
-        MANUTENCAO_TETO_MS,
-        MANUTENCAO_INICIAL_MS * 2 ** (this.manutencoes - 1),
-      );
-      const sorteio = (this.opcoes.random ?? Math.random)();
-      this.agendarReconexao(
-        "servidor em manutenção (WS 4003)",
-        base - Math.floor(sorteio * base * JITTER_MANUTENCAO),
-      );
-      return;
-    }
     this.reconectarComBackoff(`ws fechado (código ${codigo})`);
   }
 
-  private async tratarAuthRecusada(): Promise<void> {
+  private async tratarHelloRecusado(msg: string): Promise<void> {
+    const socket = this.socket;
+    this.socket = null;
+    this.socketFechado = null;
+    this.aberto = false;
+    this.emJogo = false;
     this.abrindo = true;
+    clearInterval(this.timerHeartbeat);
+    socket?.close(1000, "reauth");
     let novos: Tokens | null;
     try {
       novos = await this.invalidarLimitado();
@@ -416,23 +282,17 @@ export class GameClient implements ClienteJogo {
       const detalhe = erro instanceof Error ? erro.message : String(erro);
       if (erro instanceof AuthAdiadaError) {
         this.ultimoInvalidarEm = null;
-        this.reconectarComBackoff(
-          `token recusado pelo jogo (WS 4001) e renovação adiada: ${detalhe}`,
-        );
+        this.reconectarComBackoff(`login recusado pelo jogo (${msg}) e renovação adiada: ${detalhe}`);
         return;
       }
-      this.encerrar({
-        estado: "needs-login",
-        motivo: `token recusado pelo jogo (WS 4001) e renovação falhou: ${detalhe}`,
-      });
+      this.encerrar({ estado: "needs-login", motivo: `login recusado pelo jogo (${msg}): ${detalhe}` });
       return;
     }
     this.abrindo = false;
     if (!novos) {
       this.encerrar({
         estado: "needs-login",
-        motivo:
-          "token recusado pelo jogo (WS 4001) de novo após invalidar; aguardando login manual",
+        motivo: `login recusado pelo jogo de novo (${msg}); aguardando login manual`,
       });
       return;
     }
@@ -455,9 +315,7 @@ export class GameClient implements ClienteJogo {
   private agendarReconexao(motivo: string, atrasoMs: number): void {
     if (this.final) return;
     const quando =
-      atrasoMs >= 60_000
-        ? `${Math.round(atrasoMs / 60_000)} min`
-        : `${Math.round(atrasoMs / 1000)}s`;
+      atrasoMs >= 60_000 ? `${Math.round(atrasoMs / 60_000)} min` : `${Math.round(atrasoMs / 1000)}s`;
     this.opcoes.health.setLastError(`${motivo}; próxima tentativa em ${quando}`);
     this.timerReconexao = setTimeout(() => void this.abrir(), atrasoMs);
   }
@@ -475,7 +333,7 @@ export class GameClient implements ClienteJogo {
       }
       if (agora - this.ultimaMensagemEm > silencioMs) {
         this.pingEm = agora;
-        socket.send('{"type":"ping"}');
+        socket.send('{"t":"ping"}');
       }
     }, verificarMs);
   }
@@ -484,7 +342,7 @@ export class GameClient implements ClienteJogo {
     this.socket = null;
     this.socketFechado = null;
     this.aberto = false;
-    this.reciclando = false;
+    this.emJogo = false;
     this.pingEm = 0;
     clearInterval(this.timerHeartbeat);
     socket.close();
@@ -516,106 +374,110 @@ export class GameClient implements ClienteJogo {
     }
     if (!ehRegistro(m)) return;
     this.tentativas = 0;
-    this.manutencoes = 0;
-    const agora = this.ultimaMensagemEm;
     const e = this.dados;
-    switch (m.type) {
-      case "field-init":
+    switch (m.t) {
+      case "welcome":
+        this.aoWelcome();
+        return;
+      case "campo.init":
         if (typeof m.slug !== "string") return;
         e.huntAtual = m.slug;
-        e.huntDesde = agora;
-        e.enterHuntEnviadoEm = null;
-        e.huntCooldownAte = null;
-        this.reciclagens = 0;
+        e.huntDesde = this.ultimaMensagemEm;
+        e.huntSelectEnviadoEm = null;
         return;
-      case "field-none":
-      case "field-lost":
-      case "field-teleport-city":
-        e.huntAtual = null;
-        e.huntDesde = null;
+      case "campo":
         return;
-      case "hunt-cooldown":
-        e.huntCooldownAte = agora + Math.max(0, Number(m.ms) || 0) + MARGEM_HUNT_COOLDOWN_MS;
-        e.enterHuntEnviadoEm = null;
+      case "batalha":
+        this.processarBatalha(m.ev);
         return;
-      case "hunt-resume":
-        if (typeof m.slug === "string" && m.slug) e.huntRetomavel = m.slug;
+      case "estado":
+        this.processarEstado(m.estado);
         return;
-      case "field-kill":
-        e.ultimoKillEm = agora;
-        e.ultimoKill = typeof m.speciesName === "string" ? m.speciesName : null;
-        e.kills += 1;
-        this.reciclagens = 0;
-        console.log(
-          `worker ${this.opcoes.accountId}: field-kill${e.ultimoKill ? ` ${e.ultimoKill}` : ""} (kills ${e.kills})`,
-        );
-        this.opcoes.health.setContadores({ kills: e.kills, capturas: e.capturas });
+      case "erro":
+        this.aoErro(m);
         return;
-      case "catch-result":
-        if (m.success === true) {
-          e.capturas += 1;
-          console.log(`worker ${this.opcoes.accountId}: captura (capturas ${e.capturas})`);
-          this.opcoes.health.setContadores({ kills: e.kills, capturas: e.capturas });
-        }
+      case "sessao.renovada":
+        if (typeof m.token === "string" && m.token) this.tokenHello = m.token;
         return;
-      case "balls":
-        if (typeof m.counts !== "object" || m.counts === null) return;
-        e.balls = Object.values(m.counts).reduce<number>(
-          (total, valor) => total + (Math.floor(Number(valor)) || 0),
-          0,
-        );
-        return;
-      case "inventory":
-        if (!Array.isArray(m.items)) return;
-        e.itensInventario = m.items.filter(
-          (item: unknown) => ehRegistro(item) && Number(item.quantity) > 0,
-        ).length;
-        return;
-      case "analyzer":
-        e.ultimoAnalyzer = {
-          seconds: typeof m.seconds === "number" && Number.isFinite(m.seconds) ? m.seconds : null,
-          balance: typeof m.balance === "number" && Number.isFinite(m.balance) ? m.balance : null,
-        };
-        return;
-      case "restart-freeze": {
-        const boosts: unknown[] = Array.isArray(m.boosts) ? m.boosts : [];
-        const ativos = boosts.filter(
-          (boost) =>
-            ehRegistro(boost) && typeof boost.key === "string" && Number(boost.remainingMs) > 0,
-        );
-        if (ativos.length === 0) return;
-        if (m.frozenAt !== this.ultimoFrozenAt) {
-          this.ultimoFrozenAt = m.frozenAt;
-          this.reciclagens = 0;
-        }
-        e.restartFreeze = {
-          frozenAt: Number(m.frozenAt) || agora,
-          restartedAt: Number(m.restartedAt) || agora,
-        };
-        return;
-      }
-      case "restart-resumed":
-        e.restartFreeze = null;
-        e.restartResumeEnviadoEm = null;
-        this.reciclar();
+      case "pong":
         return;
     }
   }
+
+  private aoWelcome(): void {
+    this.emJogo = true;
+    this.dados.conectadoEm = Date.now();
+    this.opcoes.health.setState("in-game");
+    this.opcoes.health.setLastError(null);
+    this.opcoes.health.setLastAction("em jogo (welcome)");
+    if (this.opcoes.huntSlug) this.selecionarHunt(this.opcoes.huntSlug);
+  }
+
+  private processarBatalha(ev: unknown): void {
+    if (!Array.isArray(ev)) return;
+    for (const item of ev) {
+      if (!ehRegistro(item)) continue;
+      const nome = typeof item.nome === "string" ? item.nome : null;
+      if (item.k === "morte" && item.quem === "selvagem") this.registrarKill(nome);
+      else if (item.k === "captura") this.registrarCaptura(nome);
+      else if (item.k === "aviso" && typeof item.msg === "string") {
+        this.opcoes.health.setLastError(`jogo: ${item.msg}`);
+      }
+    }
+  }
+
+  private registrarKill(nome: string | null): void {
+    const e = this.dados;
+    e.ultimoKillEm = Date.now();
+    e.ultimoKill = nome;
+    e.kills += 1;
+    console.log(`worker ${this.opcoes.accountId}: morte ${nome ?? "selvagem"} (kills ${e.kills})`);
+    this.opcoes.health.setContadores({ kills: e.kills, capturas: e.capturas });
+  }
+
+  private registrarCaptura(nome: string | null): void {
+    const e = this.dados;
+    e.capturas += 1;
+    console.log(`worker ${this.opcoes.accountId}: captura ${nome ?? "selvagem"} (capturas ${e.capturas})`);
+    this.opcoes.health.setContadores({ kills: e.kills, capturas: e.capturas });
+  }
+
+  private processarEstado(estado: unknown): void {
+    if (!ehRegistro(estado) || !ehRegistro(estado.dexMud)) return;
+    const total = somarDex(estado.dexMud);
+    if (!this.baselineDex) {
+      this.baselineDex = total;
+      return;
+    }
+    const e = this.dados;
+    const kills = Math.max(e.kills, total.kills - this.baselineDex.kills);
+    const capturas = Math.max(e.capturas, total.capturas - this.baselineDex.capturas);
+    if (kills === e.kills && capturas === e.capturas) return;
+    e.kills = kills;
+    e.capturas = capturas;
+    this.opcoes.health.setContadores({ kills, capturas });
+  }
+
+  private aoErro(m: Record<string, unknown>): void {
+    const msg =
+      typeof m.msg === "string" ? m.msg : typeof m.erro === "string" ? m.erro : "erro do servidor";
+    if (!this.emJogo) {
+      void this.tratarHelloRecusado(msg);
+      return;
+    }
+    this.opcoes.health.setLastError(`jogo: ${msg}`);
+  }
 }
 
-export function criarGameClient(
-  config: WorkerConfig,
-  auth: AuthJogo,
-  health: HealthState,
-): GameClient {
+export function criarGameClient(config: WorkerConfig, auth: AuthJogo, health: HealthState): GameClient {
   return new GameClient({
     wsUrl: config.gameWsUrl,
-    shards: config.gameWsShards,
     gameUrl: config.gameUrl,
     accountId: config.accountId,
+    dispositivo: config.dispositivo,
+    huntSlug: config.huntSlug,
     auth,
     health,
-    fetch: criarFetch(config.proxyUrl),
     criarSocket: criarSocketUndici(criarDispatcher(config.proxyUrl)),
   });
 }

@@ -40,7 +40,7 @@ describe("loadConfig", () => {
       healthPort: 3001,
       solverApiUrl: "https://api.2captcha.com",
       turnstileSitekey: undefined,
-      gameWsUrl: "wss://pokeidle.example/ws",
+      gameWsUrl: "wss://pokeidle.example/",
       gameWsShards: 88,
       huntSlug: undefined,
       dispositivo: "dispositivo-fixo-123",
@@ -61,7 +61,7 @@ describe("loadConfig", () => {
 
   it("deriva ws:// de GAME_URL http", () => {
     const config = loadConfig({ ...comTokens, GAME_URL: "http://127.0.0.1:8080" });
-    expect(config.gameWsUrl).toBe("ws://127.0.0.1:8080/ws");
+    expect(config.gameWsUrl).toBe("ws://127.0.0.1:8080/");
   });
 
   it("aceita GAME_WS_URL, GAME_WS_PATH, GAME_WS_SHARDS e HUNT_SLUG", () => {

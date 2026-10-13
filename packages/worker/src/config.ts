@@ -32,7 +32,7 @@ const WS_PROTOCOLS: Record<string, true> = {
   "wss:": true,
 };
 const WS_SCHEME: Record<string, string> = { "http:": "ws:", "https:": "wss:" };
-const DEFAULT_WS_PATH = "/ws";
+const DEFAULT_WS_PATH = "/";
 const DEFAULT_WS_SHARDS = 88;
 
 export class ConfigError extends Error {
