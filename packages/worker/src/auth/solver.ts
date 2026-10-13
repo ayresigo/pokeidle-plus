@@ -8,9 +8,11 @@ import {
 } from "../http.js";
 
 export class SolverError extends Error {
-  constructor(mensagem: string) {
+  readonly transitorio: boolean;
+  constructor(mensagem: string, transitorio = false) {
     super(mensagem);
     this.name = "SolverError";
+    this.transitorio = transitorio;
   }
 }
 
@@ -46,11 +48,14 @@ async function postarSolver(
       body: JSON.stringify(corpo),
     });
   } catch (erro) {
-    throw new SolverError(`falha de rede no solver: ${descreverFalhaDeRede(erro)}`);
+    throw new SolverError(`falha de rede no solver: ${descreverFalhaDeRede(erro)}`, true);
   }
   if (!resposta.ok) {
     await descartarCorpo(resposta);
-    throw new SolverError(`solver respondeu HTTP ${resposta.status}`);
+    throw new SolverError(
+      `solver respondeu HTTP ${resposta.status}`,
+      resposta.status >= 500 || resposta.status === 429,
+    );
   }
   const dados = await lerJson(resposta);
   if (dados.errorId !== 0) {
@@ -97,7 +102,7 @@ export async function resolverTurnstile(
     }
     return typeof userAgent === "string" && userAgent !== "" ? { token, userAgent } : { token };
   }
-  throw new SolverError(`tempo esgotado aguardando o solver (${maxConsultas} consultas)`);
+  throw new SolverError(`tempo esgotado aguardando o solver (${maxConsultas} consultas)`, true);
 }
 
 export async function buscarSitekey(gameUrl: string, fetch: HttpFetch): Promise<string> {
@@ -106,11 +111,14 @@ export async function buscarSitekey(gameUrl: string, fetch: HttpFetch): Promise<
   try {
     resposta = await fetch(url, { method: "GET" });
   } catch (erro) {
-    throw new SolverError(`falha de rede ao buscar provedores: ${descreverFalhaDeRede(erro)}`);
+    throw new SolverError(`falha de rede ao buscar provedores: ${descreverFalhaDeRede(erro)}`, true);
   }
   if (!resposta.ok) {
     await descartarCorpo(resposta);
-    throw new SolverError(`GET ${url} respondeu HTTP ${resposta.status}`);
+    throw new SolverError(
+      `GET ${url} respondeu HTTP ${resposta.status}`,
+      resposta.status >= 500 || resposta.status === 429,
+    );
   }
   const corpo = await lerJson(resposta);
   const sitekey = corpo.turnstile;

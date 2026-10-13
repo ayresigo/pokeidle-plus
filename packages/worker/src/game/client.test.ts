@@ -85,13 +85,16 @@ let health: HealthState;
 let auth: AuthJogo & { getTokens: Mock; invalidar: Mock };
 let cliente: GameClient | null = null;
 
-function criarAuth(): AuthJogo & { getTokens: Mock; invalidar: Mock } {
+function criarAuth(): AuthJogo & { getTokens: Mock; invalidar: Mock; adotar: Mock } {
   let atuais = tokensIniciais;
   return {
     getTokens: vi.fn(async () => atuais),
     invalidar: vi.fn(async () => {
       atuais = tokensNovos;
       return atuais;
+    }),
+    adotar: vi.fn((t: Tokens) => {
+      atuais = t;
     }),
   };
 }
@@ -262,20 +265,25 @@ describe("GameClient: handshake e eventos", () => {
     expect(() => c.selecionarHunt("x")).toThrow("desconectado");
   });
 
-  it("sessao.renovada troca o token em uso e publica via health.setTokens", async () => {
+  it("sessao.renovada adota o token; após a queda o 2º hello leva o renovado", async () => {
     const c = novoCliente();
     c.conectar();
     const conexao = await servidor.conexao(0);
     servidor.emitir(conexao, { t: "welcome", estado: {} });
     await vi.waitFor(() => expect(health.snapshot().state).toBe("in-game"));
-    expect(health.snapshot().tokens).toBeUndefined();
 
     servidor.emitir(conexao, { t: "sessao.renovada", token: "token-renovado-ws" });
     await vi.waitFor(() =>
-      expect(health.snapshot().tokens).toEqual({
+      expect(auth.adotar).toHaveBeenCalledWith({
         accessToken: "token-renovado-ws",
         refreshToken: "token-renovado-ws",
       }),
+    );
+
+    conexao.socket.close(1012, "restart");
+    const segunda = await servidor.conexao(1);
+    await vi.waitFor(() =>
+      expect(segunda.mensagens[0]).toMatchObject({ t: "hello", token: "token-renovado-ws" }),
     );
   });
 });
@@ -544,5 +552,56 @@ describe("GameClient: política de reconexão (fake timers)", () => {
     expect(sockets).toHaveLength(3);
     sockets[2]!.abrir();
     expect(sockets[2]!.enviados[0]).toMatchObject({ t: "hello", token: accessNovo });
+  });
+});
+
+describe("GameClient: close codes e sessão substituída (I5)", () => {
+  async function emJogo(): Promise<{ c: GameClient; conexao: ConexaoFake }> {
+    const c = novoCliente();
+    c.conectar();
+    const conexao = await servidor.conexao(0);
+    servidor.emitir(conexao, { t: "welcome", estado: {} });
+    await vi.waitFor(() => expect(health.snapshot().state).toBe("in-game"));
+    return { c, conexao };
+  }
+
+  it("close 4001 → needs-login (sessão substituída) sem reconectar", async () => {
+    const { c, conexao } = await emJogo();
+    conexao.socket.close(4001, "replaced");
+    await expect(c.encerrado).resolves.toMatchObject({ estado: "needs-login" });
+    expect(health.snapshot().lastError).toContain("substituída");
+    semReconexao(c, 1);
+  });
+
+  it("close 4003 → error (IP banido) sem reconectar", async () => {
+    const { c, conexao } = await emJogo();
+    conexao.socket.close(4003, "ip");
+    await expect(c.encerrado).resolves.toMatchObject({ estado: "error" });
+    expect(health.snapshot().state).toBe("error");
+    semReconexao(c, 1);
+  });
+
+  it("close 4000 → needs-login (conta bloqueada) sem reconectar", async () => {
+    const { c, conexao } = await emJogo();
+    conexao.socket.close(4000, "ban");
+    await expect(c.encerrado).resolves.toMatchObject({ estado: "needs-login" });
+    semReconexao(c, 1);
+  });
+
+  it("erro com chave de conta bloqueada encerra em error", async () => {
+    const { c, conexao } = await emJogo();
+    servidor.emitir(conexao, { t: "erro", chave: "auth.contaBanida" });
+    await expect(c.encerrado).resolves.toMatchObject({ estado: "error" });
+  });
+
+  it("N quedas logo após o welcome → needs-login (backstop)", async () => {
+    servidor.aoConectar = (conexao) => {
+      conexao.socket.send(JSON.stringify({ t: "welcome", estado: {} }));
+      conexao.socket.close(1011, "drop");
+    };
+    const c = novoCliente();
+    c.conectar();
+    await expect(c.encerrado).resolves.toMatchObject({ estado: "needs-login" });
+    expect(health.snapshot().lastError).toContain("substituída");
   });
 });

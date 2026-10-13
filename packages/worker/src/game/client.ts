@@ -8,6 +8,7 @@ import { criarDispatcher } from "../http.js";
 export interface AuthJogo {
   getTokens(): Promise<Tokens>;
   invalidar(): Promise<Tokens>;
+  adotar(tokens: Tokens): void;
 }
 
 export interface EstadoJogo {
@@ -29,6 +30,7 @@ export interface MotivoEncerramento {
 export interface ClienteJogo {
   readonly conectado: boolean;
   readonly estado: Readonly<EstadoJogo>;
+  readonly huntAlvo: string | null;
   selecionarHunt(slug: string): void;
 }
 
@@ -65,6 +67,28 @@ const TETO_LONGO_MS = 5 * 60_000;
 const HEARTBEAT_PADRAO = { verificarMs: 10_000, silencioMs: 45_000, prazoPingMs: 15_000 };
 const INTERVALO_MINIMO_INVALIDAR_MS = 5 * 60_000;
 const TIMEOUT_DESCONEXAO_MS = 2_000;
+const HUNT_PADRAO = "bellsprout";
+const JANELA_POS_WELCOME_MS = 60_000;
+const MAX_QUEDAS_POS_WELCOME = 4;
+const FECHAMENTOS_TERMINAIS: Record<number, MotivoEncerramento> = {
+  4000: { estado: "needs-login", motivo: "conta bloqueada pelo servidor (close 4000)" },
+  4001: { estado: "needs-login", motivo: "sessão substituída: conta aberta em outro lugar? (close 4001)" },
+  4003: { estado: "error", motivo: "IP banido pelo servidor (close 4003)" },
+};
+const CHAVES_CONTA_BLOQUEADA: Record<string, MotivoEncerramento> = {
+  "auth.contaBanida": { estado: "error", motivo: "conta banida" },
+  "auth.contaExcluida": { estado: "error", motivo: "conta excluída" },
+  "auth.ipBanido": { estado: "error", motivo: "IP banido" },
+  "login.contaBanida": { estado: "error", motivo: "conta banida" },
+  "login.ipBanido": { estado: "error", motivo: "IP banido" },
+};
+const CHAVES_RECUSA_TOKEN: Record<string, true> = {
+  "auth.sessaoInvalida": true,
+  "auth.precisaLogin": true,
+  "login.credenciaisInvalidas": true,
+  "login.turnstileFalhou": true,
+  "login.falhou": true,
+};
 
 function ehRegistro(valor: unknown): valor is Record<string, unknown> {
   return typeof valor === "object" && valor !== null && !Array.isArray(valor);
@@ -132,6 +156,9 @@ export class GameClient implements ClienteJogo {
   private ultimoInvalidarEm: number | null = null;
   private timerReconexao: NodeJS.Timeout | undefined;
   private timerHeartbeat: NodeJS.Timeout | undefined;
+  private alvoHunt: string | null = null;
+  private welcomeEm = 0;
+  private quedasPosWelcome = 0;
 
   constructor(private readonly opcoes: OpcoesClient) {
     this.encerrado = this.fim.promise;
@@ -148,6 +175,10 @@ export class GameClient implements ClienteJogo {
 
   get reconexaoPendente(): boolean {
     return this.timerReconexao !== undefined || this.abrindo;
+  }
+
+  get huntAlvo(): string | null {
+    return this.alvoHunt;
   }
 
   conectar(): void {
@@ -255,6 +286,8 @@ export class GameClient implements ClienteJogo {
 
   private aoFechar(socket: SocketJogo, codigo: number): void {
     if (this.socket !== socket) return;
+    const eraEmJogo = this.emJogo;
+    const welcomeEm = this.welcomeEm;
     this.socket = null;
     this.socketFechado = null;
     this.aberto = false;
@@ -262,6 +295,21 @@ export class GameClient implements ClienteJogo {
     this.abrindo = false;
     clearInterval(this.timerHeartbeat);
     if (this.final) return;
+    const terminal = FECHAMENTOS_TERMINAIS[codigo];
+    if (terminal) {
+      this.encerrar({ estado: terminal.estado, motivo: terminal.motivo });
+      return;
+    }
+    if (eraEmJogo && welcomeEm > 0 && Date.now() - welcomeEm < JANELA_POS_WELCOME_MS) {
+      this.quedasPosWelcome += 1;
+      if (this.quedasPosWelcome >= MAX_QUEDAS_POS_WELCOME) {
+        this.encerrar({
+          estado: "needs-login",
+          motivo: `sessão possivelmente substituída (conta aberta em outro lugar?): ${this.quedasPosWelcome} quedas logo após o welcome`,
+        });
+        return;
+      }
+    }
     this.reconectarComBackoff(`ws fechado (código ${codigo})`);
   }
 
@@ -374,10 +422,17 @@ export class GameClient implements ClienteJogo {
     }
     if (!ehRegistro(m)) return;
     this.tentativas = 0;
+    if (
+      this.quedasPosWelcome > 0 &&
+      this.welcomeEm > 0 &&
+      Date.now() - this.welcomeEm >= JANELA_POS_WELCOME_MS
+    ) {
+      this.quedasPosWelcome = 0;
+    }
     const e = this.dados;
     switch (m.t) {
       case "welcome":
-        this.aoWelcome();
+        this.aoWelcome(m);
         return;
       case "campo.init":
         if (typeof m.slug !== "string") return;
@@ -399,7 +454,7 @@ export class GameClient implements ClienteJogo {
       case "sessao.renovada":
         if (typeof m.token === "string" && m.token) {
           this.tokenHello = m.token;
-          this.opcoes.health.setTokens({ accessToken: m.token, refreshToken: m.token });
+          this.opcoes.auth.adotar({ accessToken: m.token, refreshToken: m.token });
         }
         return;
       case "pong":
@@ -407,13 +462,18 @@ export class GameClient implements ClienteJogo {
     }
   }
 
-  private aoWelcome(): void {
+  private aoWelcome(m: Record<string, unknown>): void {
     this.emJogo = true;
+    this.welcomeEm = Date.now();
     this.dados.conectadoEm = Date.now();
     this.opcoes.health.setState("in-game");
     this.opcoes.health.setLastError(null);
     this.opcoes.health.setLastAction("em jogo (welcome)");
-    if (this.opcoes.huntSlug) this.selecionarHunt(this.opcoes.huntSlug);
+    const estado = ehRegistro(m.estado) ? m.estado : null;
+    const doServidor =
+      estado && typeof estado.huntSlug === "string" && estado.huntSlug ? estado.huntSlug : null;
+    this.alvoHunt = this.opcoes.huntSlug ?? doServidor ?? HUNT_PADRAO;
+    this.selecionarHunt(this.alvoHunt);
   }
 
   private processarBatalha(ev: unknown): void {
@@ -462,10 +522,21 @@ export class GameClient implements ClienteJogo {
   }
 
   private aoErro(m: Record<string, unknown>): void {
+    const chave = typeof m.chave === "string" ? m.chave : null;
     const msg =
-      typeof m.msg === "string" ? m.msg : typeof m.erro === "string" ? m.erro : "erro do servidor";
+      chave ??
+      (typeof m.msg === "string" ? m.msg : typeof m.erro === "string" ? m.erro : "erro do servidor");
+    const bloqueada = chave ? CHAVES_CONTA_BLOQUEADA[chave] : undefined;
+    if (bloqueada) {
+      this.encerrar({ estado: bloqueada.estado, motivo: `jogo: ${bloqueada.motivo} (${chave})` });
+      return;
+    }
     if (!this.emJogo) {
-      void this.tratarHelloRecusado(msg);
+      if (!chave || CHAVES_RECUSA_TOKEN[chave]) {
+        void this.tratarHelloRecusado(msg);
+        return;
+      }
+      this.opcoes.health.setLastError(`jogo (pré-welcome): ${msg}`);
       return;
     }
     this.opcoes.health.setLastError(`jogo: ${msg}`);

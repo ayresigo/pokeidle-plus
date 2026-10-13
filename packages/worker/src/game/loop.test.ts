@@ -280,6 +280,7 @@ describe("drenar", () => {
 
 class ClienteFake implements ClienteJogo {
   conectado = true;
+  huntAlvo: string | null = "caterpie";
   readonly estado: EstadoJogo = {
     conectadoEm: Date.now(),
     huntAtual: null,
@@ -297,48 +298,41 @@ class ClienteFake implements ClienteJogo {
   });
 }
 
-function acoesPorNome(huntSlug?: string): Record<string, Acao<ClienteJogo>> {
-  return Object.fromEntries(criarAcoes({ huntSlug, health }).map((a) => [a.nome, a]));
+function acoesPorNome(): Record<string, Acao<ClienteJogo>> {
+  return Object.fromEntries(criarAcoes({ health }).map((a) => [a.nome, a]));
 }
 
 describe("ação garantir-hunt", () => {
   it("desconectado só aguarda", async () => {
     const c = new ClienteFake();
     c.conectado = false;
-    await expect(acoesPorNome("caterpie")["garantir-hunt"]!.executar(c)).resolves.toBe(
-      "aguardando conexão",
-    );
+    await expect(acoesPorNome()["garantir-hunt"]!.executar(c)).resolves.toBe("aguardando conexão");
     expect(c.selecionarHunt).not.toHaveBeenCalled();
   });
 
-  it("fora de hunt seleciona o HUNT_SLUG", async () => {
+  it("fora de hunt seleciona o huntAlvo resolvido", async () => {
     const c = new ClienteFake();
-    await expect(acoesPorNome("caterpie")["garantir-hunt"]!.executar(c)).resolves.toBe(
-      "hunt.select caterpie",
-    );
+    await expect(acoesPorNome()["garantir-hunt"]!.executar(c)).resolves.toBe("hunt.select caterpie");
     expect(c.comandos).toEqual(["hunt.select caterpie"]);
   });
 
   it("em hunt não envia nada", async () => {
     const c = new ClienteFake();
     c.estado.huntAtual = "caterpie";
-    await expect(acoesPorNome("caterpie")["garantir-hunt"]!.executar(c)).resolves.toBe(
-      "em hunt caterpie",
-    );
+    await expect(acoesPorNome()["garantir-hunt"]!.executar(c)).resolves.toBe("em hunt caterpie");
     expect(c.selecionarHunt).not.toHaveBeenCalled();
   });
 
-  it("sem HUNT_SLUG fica idle pedindo HUNT_SLUG", async () => {
+  it("sem huntAlvo fica idle", async () => {
     const c = new ClienteFake();
-    await expect(acoesPorNome()["garantir-hunt"]!.executar(c)).resolves.toBe(
-      "idle: sem hunt configurada",
-    );
+    c.huntAlvo = null;
+    await expect(acoesPorNome()["garantir-hunt"]!.executar(c)).resolves.toBe("idle: sem hunt alvo");
     expect(c.selecionarHunt).not.toHaveBeenCalled();
-    expect(health.snapshot().lastError).toContain("HUNT_SLUG");
+    expect(health.snapshot().lastError).toContain("sem hunt alvo");
   });
 
   it("não reenvia hunt.select antes de 10s sem campo.init", async () => {
-    const garantir = acoesPorNome("caterpie")["garantir-hunt"]!;
+    const garantir = acoesPorNome()["garantir-hunt"]!;
     const c = new ClienteFake();
     await garantir.executar(c);
     vi.advanceTimersByTime(9_999);
@@ -349,7 +343,7 @@ describe("ação garantir-hunt", () => {
   });
 
   it("3 hunt.select sem campo.init avisam que a hunt foi ignorada; campo.init zera", async () => {
-    const garantir = acoesPorNome("caterpie")["garantir-hunt"]!;
+    const garantir = acoesPorNome()["garantir-hunt"]!;
     const c = new ClienteFake();
     for (let tentativa = 1; tentativa <= 3; tentativa += 1) {
       expect(health.snapshot().lastError).toBeNull();
@@ -357,7 +351,7 @@ describe("ação garantir-hunt", () => {
       vi.advanceTimersByTime(10_000);
     }
     expect(c.selecionarHunt).toHaveBeenCalledTimes(3);
-    expect(health.snapshot().lastError).toBe("HUNT_SLUG inválido ou hunt ignorada: caterpie");
+    expect(health.snapshot().lastError).toBe("hunt inválida ou ignorada: caterpie");
 
     c.estado.huntAtual = "caterpie";
     await garantir.executar(c);
@@ -374,7 +368,7 @@ describe("ação garantir-hunt", () => {
 
 describe("ação watchdog-stall", () => {
   it("10 min sem kill com socket vivo → hunt.select", async () => {
-    const watchdog = acoesPorNome("caterpie")["watchdog-stall"]!;
+    const watchdog = acoesPorNome()["watchdog-stall"]!;
     const c = new ClienteFake();
     c.estado.huntAtual = "caterpie";
     c.estado.huntDesde = Date.now();
@@ -390,7 +384,7 @@ describe("ação watchdog-stall", () => {
   });
 
   it("kill recente adia o watchdog; sem hunt ou desconectado não age", async () => {
-    const watchdog = acoesPorNome("caterpie")["watchdog-stall"]!;
+    const watchdog = acoesPorNome()["watchdog-stall"]!;
     const c = new ClienteFake();
     c.estado.huntAtual = "caterpie";
     c.estado.huntDesde = Date.now();
@@ -413,7 +407,7 @@ describe("ação watchdog-stall", () => {
   });
 
   it("após 3 recuperações sem kill avisa no lastError e espaça para 1h; kill zera", async () => {
-    const watchdog = acoesPorNome("caterpie")["watchdog-stall"]!;
+    const watchdog = acoesPorNome()["watchdog-stall"]!;
     const c = new ClienteFake();
     const entrarNaHunt = () => {
       c.estado.huntAtual = "caterpie";
@@ -446,7 +440,7 @@ describe("ação watchdog-stall", () => {
     const c = new ClienteFake();
     c.estado.huntAtual = "caterpie";
     c.estado.huntDesde = Date.now();
-    loop = runGameLoop(c, criarAcoes({ huntSlug: "caterpie", health }), {
+    loop = runGameLoop(c, criarAcoes({ health }), {
       minDelayMs: 30_000,
       maxDelayMs: 30_000,
       health,

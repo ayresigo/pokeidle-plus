@@ -35,7 +35,6 @@ export function atrasoComJitter(
 }
 
 export interface OpcoesAcoes {
-  huntSlug: string | undefined;
   health: HealthState;
 }
 
@@ -54,9 +53,9 @@ export function criarAcoes(opcoes: OpcoesAcoes): Acao<ClienteJogo>[] {
         entradasSemCampoInit = 0;
         return `em hunt ${estado.huntAtual}`;
       }
-      if (!opcoes.huntSlug) {
-        opcoes.health.setLastError("HUNT_SLUG ausente; defina HUNT_SLUG para o worker caçar");
-        return "idle: sem hunt configurada";
+      if (!client.huntAlvo) {
+        opcoes.health.setLastError("sem hunt alvo (aguardando welcome)");
+        return "idle: sem hunt alvo";
       }
       const agora = Date.now();
       if (
@@ -65,12 +64,12 @@ export function criarAcoes(opcoes: OpcoesAcoes): Acao<ClienteJogo>[] {
       ) {
         return "aguardando campo.init";
       }
-      client.selecionarHunt(opcoes.huntSlug);
+      client.selecionarHunt(client.huntAlvo);
       entradasSemCampoInit += 1;
       if (entradasSemCampoInit >= MAX_ENTRADAS_SEM_CAMPO_INIT) {
-        opcoes.health.setLastError(`HUNT_SLUG inválido ou hunt ignorada: ${opcoes.huntSlug}`);
+        opcoes.health.setLastError(`hunt inválida ou ignorada: ${client.huntAlvo}`);
       }
-      return `hunt.select ${opcoes.huntSlug}`;
+      return `hunt.select ${client.huntAlvo}`;
     },
   };
 

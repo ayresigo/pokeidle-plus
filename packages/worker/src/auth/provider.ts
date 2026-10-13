@@ -7,8 +7,8 @@ import {
   type HttpFetch,
   type RespostaHttp,
 } from "../http.js";
-import { RefreshIndisponivelError, lerExpiracao, renovarTokens } from "./refresh.js";
-import { buscarSitekey, resolverTurnstile, type SolucaoTurnstile } from "./solver.js";
+import { lerExpiracao } from "./refresh.js";
+import { buscarSitekey, resolverTurnstile, SolverError, type SolucaoTurnstile } from "./solver.js";
 
 export interface TokenProvider {
   getTokens(): Promise<Tokens>;
@@ -29,10 +29,16 @@ export class AuthAdiadaError extends Error {
 }
 
 export class LoginError extends Error {
-  constructor(mensagem: string) {
+  readonly transitorio: boolean;
+  constructor(mensagem: string, transitorio = false) {
     super(mensagem);
     this.name = "LoginError";
+    this.transitorio = transitorio;
   }
+}
+
+export function ehTransitorio(erro: unknown): boolean {
+  return (erro instanceof SolverError || erro instanceof LoginError) && erro.transitorio;
 }
 
 export function ocultarSegredos(texto: string, segredos: readonly (string | undefined)[]): string {
@@ -94,7 +100,7 @@ async function loginComCaptcha(
       }),
     });
   } catch (erro) {
-    throw new LoginError(`falha de rede no login: ${descreverFalhaDeRede(erro)}`);
+    throw new LoginError(`falha de rede no login: ${descreverFalhaDeRede(erro)}`, true);
   }
   const corpo = await lerJson(resposta);
   if (!resposta.ok) {
@@ -102,7 +108,10 @@ async function loginComCaptcha(
       typeof corpo.erro === "string" && corpo.erro !== ""
         ? `: ${ocultarSegredos(corpo.erro, [password, captcha.token])}`
         : "";
-    throw new LoginError(`login recusado (HTTP ${resposta.status})${motivo}`);
+    throw new LoginError(
+      `login recusado (HTTP ${resposta.status})${motivo}`,
+      resposta.status >= 500 || resposta.status === 429,
+    );
   }
   if (corpo.precisaNick === true) {
     throw new LoginError("conta sem personagem (precisaNick)");
@@ -154,7 +163,7 @@ export class SolverTokenProvider implements TokenProvider {
   }
 }
 
-export type OrigemTokens = "stored" | "refresh" | "solver";
+export type OrigemTokens = "stored" | "solver";
 
 export type ResultadoAuth =
   | { ok: true; origem: OrigemTokens }
@@ -178,7 +187,6 @@ const RESULTADO_PARADO: ResultadoAuth = {
 };
 const DESCRICAO_ORIGEM: Record<OrigemTokens, string> = {
   stored: "tokens salvos",
-  refresh: "refresh",
   solver: "solver",
 };
 
@@ -212,8 +220,26 @@ export class AuthManager implements TokenProvider {
     if (this.tokens && this.precisaRenovar(this.tokens.accessToken)) {
       await this.unico(() => this.executarRenovacao());
     }
-    if (!this.tokens) throw new AuthIndisponivelError("sem tokens válidos (needs-login)");
+    if (!this.tokens) {
+      if (this.falhasTransitorias > 0) {
+        throw new AuthAdiadaError("autenticação adiada; nova tentativa agendada");
+      }
+      throw new AuthIndisponivelError("sem tokens válidos (needs-login)");
+    }
     return this.tokens;
+  }
+
+  adotar(tokens: Tokens): void {
+    this.tokens = tokens;
+    this.aceitoEm = Date.now();
+    this.falhasTransitorias = 0;
+    this.health.setTokens(tokens);
+    const exp = lerExpiracao(tokens.accessToken);
+    if (exp === null) {
+      this.desarmar();
+      return;
+    }
+    this.armar(Math.max(exp - MARGEM_REFRESH_MS - Date.now(), PISO_REFRESH_MS));
   }
 
   parar(): void {
@@ -235,31 +261,16 @@ export class AuthManager implements TokenProvider {
     const salvos = await this.tentar("tokens salvos", () => this.opcoes.stored.getTokens(), falhas);
     if (!salvos) return this.viaSolver(falhas);
     if (!this.expirado(salvos.accessToken)) return this.aceitar(salvos, "stored");
-    return this.renovarCom(salvos, falhas);
+    return this.viaSolver(falhas);
   }
 
   private executarRenovacao(): Promise<ResultadoAuth> {
     if (!this.tokens) return this.executarAutenticacao();
     this.health.setLastAction("renovando tokens");
-    return this.renovarCom(this.tokens, []);
+    return this.viaSolver([]);
   }
 
-  private async renovarCom(atuais: Tokens, falhas: string[]): Promise<ResultadoAuth> {
-    if (this.parado) return RESULTADO_PARADO;
-    let renovados: Tokens;
-    try {
-      renovados = await this.refresh();
-    } catch (erro) {
-      const motivo = this.descrever("refresh", erro);
-      if (erro instanceof RefreshIndisponivelError) return this.adiar(atuais, motivo);
-      falhas.push(motivo);
-      this.health.setState("authenticating");
-      return this.viaSolver(falhas);
-    }
-    return this.aceitar(renovados, "refresh");
-  }
-
-  private adiar(atuais: Tokens, motivo: string): ResultadoAuth {
+  private adiar(atuais: Tokens | null, motivo: string): ResultadoAuth {
     this.tokens = atuais;
     this.falhasTransitorias += 1;
     const atraso = Math.min(
@@ -274,16 +285,22 @@ export class AuthManager implements TokenProvider {
 
   private async viaSolver(falhas: string[]): Promise<ResultadoAuth> {
     if (this.parado) return RESULTADO_PARADO;
-    const doSolver = await this.tentar("solver", () => this.opcoes.solver.getTokens(), falhas);
-    if (doSolver) return this.aceitar(doSolver, "solver");
-    this.desarmar();
-    this.tokens = null;
-    this.falhasTransitorias = 0;
-    const motivo = `todas as estratégias de autenticação falharam: ${falhas.join("; ")}`;
-    this.health.setState("needs-login");
-    this.health.setLastError(motivo);
-    this.health.setLastAction("aguardando login manual");
-    return { ok: false, needsLogin: true, motivo };
+    let doSolver: Tokens;
+    try {
+      doSolver = await this.opcoes.solver.getTokens();
+    } catch (erro) {
+      const motivo = this.descrever("solver", erro);
+      if (ehTransitorio(erro)) return this.adiar(this.tokens, [...falhas, motivo].join("; "));
+      this.desarmar();
+      this.tokens = null;
+      this.falhasTransitorias = 0;
+      const texto = `autenticação falhou: ${[...falhas, motivo].join("; ")}`;
+      this.health.setState("needs-login");
+      this.health.setLastError(texto);
+      this.health.setLastAction("aguardando login manual");
+      return { ok: false, needsLogin: true, motivo: texto };
+    }
+    return this.aceitar(doSolver, "solver");
   }
 
   private aceitar(tokens: Tokens, origem: OrigemTokens): ResultadoAuth {
@@ -356,10 +373,6 @@ export class AuthManager implements TokenProvider {
     const mensagem = erro instanceof Error ? erro.message : String(erro);
     const segredos = [...this.opcoes.segredos, this.tokens?.accessToken, this.tokens?.refreshToken];
     return `${etapa}: ${ocultarSegredos(mensagem, segredos).slice(0, MAX_FALHA_CHARS)}`;
-  }
-
-  private refresh(): Promise<Tokens> {
-    return renovarTokens();
   }
 }
 

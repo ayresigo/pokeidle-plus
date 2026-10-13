@@ -1,19 +1,3 @@
-import type { Tokens } from "../health.js";
-
-export class RefreshIndisponivelError extends Error {
-  constructor(detalhe: string) {
-    super(`refresh indisponível (${detalhe})`);
-    this.name = "RefreshIndisponivelError";
-  }
-}
-
-export class RefreshNaoSuportadoError extends Error {
-  constructor() {
-    super("pokeidle não possui endpoint de refresh; novo login via solver necessário");
-    this.name = "RefreshNaoSuportadoError";
-  }
-}
-
 export function lerExpiracao(token: string): number | null {
   const partes = token.split(".");
   if (partes.length !== 3) return null;
@@ -25,8 +9,4 @@ export function lerExpiracao(token: string): number | null {
   } catch {
     return null;
   }
-}
-
-export function renovarTokens(): Promise<Tokens> {
-  return Promise.reject(new RefreshNaoSuportadoError());
 }

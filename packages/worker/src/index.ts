@@ -68,7 +68,7 @@ console.log(`worker ${config.accountId}: ${descreverResultado(resultado)}`);
 
 if (!encerrando && (resultado.ok || !resultado.needsLogin)) {
   const jogo = criarGameClient(config, auth, health);
-  const rodando = runGameLoop(jogo, criarAcoes({ huntSlug: config.huntSlug, health }), {
+  const rodando = runGameLoop(jogo, criarAcoes({ health }), {
     minDelayMs: ATRASO_MIN_ACAO_MS,
     maxDelayMs: ATRASO_MAX_ACAO_MS,
     health,

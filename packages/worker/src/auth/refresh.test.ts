@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { criarJwt } from "./__fixtures__/jwt.js";
-import { RefreshNaoSuportadoError, lerExpiracao, renovarTokens } from "./refresh.js";
+import { lerExpiracao } from "./refresh.js";
 
 describe("lerExpiracao", () => {
   it("lê o exp do payload do JWT em milissegundos", () => {
@@ -16,11 +16,5 @@ describe("lerExpiracao", () => {
 
   it("retorna null para o token opaco de duas partes do pokeidle", () => {
     expect(lerExpiracao(`${"a".repeat(76)}.${"b".repeat(75)}`)).toBeNull();
-  });
-});
-
-describe("renovarTokens", () => {
-  it("rejeita com RefreshNaoSuportadoError porque pokeidle não tem refresh", async () => {
-    await expect(renovarTokens()).rejects.toBeInstanceOf(RefreshNaoSuportadoError);
   });
 });

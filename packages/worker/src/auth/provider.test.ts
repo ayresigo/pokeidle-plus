@@ -4,6 +4,7 @@ import { HealthState, type Tokens } from "../health.js";
 import type { HttpFetch } from "../http.js";
 import { criarJwt, respostaJson } from "./__fixtures__/jwt.js";
 import {
+  AuthAdiadaError,
   AuthIndisponivelError,
   AuthManager,
   LoginError,
@@ -11,6 +12,7 @@ import {
   StoredTokenProvider,
   type TokenProvider,
 } from "./provider.js";
+import { SolverError } from "./solver.js";
 
 const agoraSeg = () => Math.floor(Date.now() / 1000);
 const gameUrl = "https://jogo.example";
@@ -409,5 +411,91 @@ describe("AuthManager", () => {
     expect(lastError).toContain("HTTP 400");
     expect(lastError).not.toContain(solverKey.slice(0, 8));
     expect(lastError.length).toBeLessThan(800);
+  });
+});
+
+describe("AuthManager — transitório vs definitivo (I3/I4)", () => {
+  const opaco = { accessToken: "tok-opaco", refreshToken: "tok-opaco" };
+
+  it("falha transitória do solver não vira needs-login; agenda retry", async () => {
+    vi.useFakeTimers();
+    try {
+      const solver = {
+        getTokens: vi.fn<() => Promise<Tokens>>().mockRejectedValue(
+          new SolverError("falha de rede", true),
+        ),
+      };
+      const health = new HealthState(null);
+      const manager = criarGerente(health, {
+        stored: provedor(new AuthIndisponivelError("sem tokens")),
+        solver,
+      });
+      const r = await manager.autenticar();
+      expect(r).toMatchObject({ ok: false, needsLogin: false });
+      expect(health.snapshot().state).not.toBe("needs-login");
+      expect(await erroDe(manager.getTokens())).toBeInstanceOf(AuthAdiadaError);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(solver.getTokens.mock.calls.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("falha definitiva do solver vira needs-login", async () => {
+    const solver = {
+      getTokens: vi.fn<() => Promise<Tokens>>().mockRejectedValue(
+        new SolverError("credencial inválida", false),
+      ),
+    };
+    const health = new HealthState(null);
+    const r = await criarGerente(health, {
+      stored: provedor(new AuthIndisponivelError("sem")),
+      solver,
+    }).autenticar();
+    expect(r).toMatchObject({ ok: false, needsLogin: true });
+    expect(health.snapshot().state).toBe("needs-login");
+  });
+
+  it("LoginError de rede é transitório; 4xx de credencial é definitivo", () => {
+    expect(new LoginError("falha de rede no login", true).transitorio).toBe(true);
+    expect(new LoginError("login recusado (HTTP 400)").transitorio).toBe(false);
+    expect(new SolverError("HTTP 503", true).transitorio).toBe(true);
+    expect(new SolverError("errorId", false).transitorio).toBe(false);
+  });
+
+  it("agenda renovação antes do exp e re-loga pelo solver, reagendando", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    try {
+      const stored = provedor({ accessToken: criarJwt(120), refreshToken: "r" });
+      const solver = provedor({ accessToken: criarJwt(240), refreshToken: "r2" });
+      const manager = criarGerente(new HealthState(null), { stored, solver });
+      expect(await manager.autenticar()).toEqual({ ok: true, origem: "stored" });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(solver.getTokens).toHaveBeenCalledTimes(1);
+      await expect(manager.getTokens()).resolves.toMatchObject({ refreshToken: "r2" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("parar() durante renovação em voo não reagenda timer", async () => {
+    vi.useFakeTimers();
+    try {
+      const pend = Promise.withResolvers<Tokens>();
+      const solver = { getTokens: vi.fn<() => Promise<Tokens>>(() => pend.promise) };
+      const manager = criarGerente(new HealthState(opaco), { stored: provedor(opaco), solver });
+      await manager.autenticar();
+      const p = manager.invalidar().catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(0);
+      manager.parar();
+      pend.resolve({ accessToken: criarJwt(120), refreshToken: "r" });
+      await p;
+      solver.getTokens.mockClear();
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(solver.getTokens).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
