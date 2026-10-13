@@ -27,7 +27,7 @@ function erroDe(env: Record<string, string | undefined>): ConfigError {
 
 describe("loadConfig", () => {
   it("aceita só tokens e aplica defaults", () => {
-    expect(loadConfig(comTokens)).toEqual({
+    expect(loadConfig({ ...comTokens, DISPOSITIVO: "dispositivo-fixo-123" })).toEqual({
       accountId: "conta-1",
       gameUrl: "https://pokeidle.example",
       accessToken: "access-secreto",
@@ -43,7 +43,20 @@ describe("loadConfig", () => {
       gameWsUrl: "wss://pokeidle.example/ws",
       gameWsShards: 88,
       huntSlug: undefined,
+      dispositivo: "dispositivo-fixo-123",
     });
+  });
+
+  it("gera um dispositivo UUID quando DISPOSITIVO está ausente", () => {
+    const config = loadConfig(comTokens);
+    expect(config.dispositivo).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+  });
+
+  it("usa o DISPOSITIVO do env quando presente", () => {
+    const config = loadConfig({ ...comSolver, DISPOSITIVO: "uuid-do-cliente" });
+    expect(config.dispositivo).toBe("uuid-do-cliente");
   });
 
   it("deriva ws:// de GAME_URL http", () => {

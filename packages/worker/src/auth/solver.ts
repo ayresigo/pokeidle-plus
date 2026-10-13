@@ -100,40 +100,24 @@ export async function resolverTurnstile(
   throw new SolverError(`tempo esgotado aguardando o solver (${maxConsultas} consultas)`);
 }
 
-export function extrairSitekey(texto: string): string | null {
-  const atributo = /data-sitekey=["']([^"']+)["']/.exec(texto);
-  if (atributo?.[1]) return atributo[1];
-  return /["'](0x4AAAAAA[\w-]{10,})["']/.exec(texto)?.[1] ?? null;
-}
-
-export function listarChunks(html: string): string[] {
-  return [...new Set(html.match(/\/_next\/static\/chunks\/[\w.~-]+\.js/g) ?? [])];
-}
-
-async function baixarTexto(url: string, fetch: HttpFetch): Promise<string> {
+export async function buscarSitekey(gameUrl: string, fetch: HttpFetch): Promise<string> {
+  const url = new URL("/auth/provedores", gameUrl).toString();
   let resposta: RespostaHttp;
   try {
     resposta = await fetch(url, { method: "GET" });
   } catch (erro) {
-    throw new SolverError(`falha de rede ao baixar ${url}: ${descreverFalhaDeRede(erro)}`);
+    throw new SolverError(`falha de rede ao buscar provedores: ${descreverFalhaDeRede(erro)}`);
   }
   if (!resposta.ok) {
     await descartarCorpo(resposta);
     throw new SolverError(`GET ${url} respondeu HTTP ${resposta.status}`);
   }
-  return resposta.text();
-}
-
-export async function descobrirSitekey(gameUrl: string, fetch: HttpFetch): Promise<string> {
-  const html = await baixarTexto(new URL("/login", gameUrl).toString(), fetch);
-  const doHtml = extrairSitekey(html);
-  if (doHtml) return doHtml;
-
-  for (const chunk of listarChunks(html)) {
-    const sitekey = extrairSitekey(await baixarTexto(new URL(chunk, gameUrl).toString(), fetch));
-    if (sitekey) return sitekey;
+  const corpo = await lerJson(resposta);
+  const sitekey = corpo.turnstile;
+  if (typeof sitekey !== "string" || sitekey === "") {
+    throw new SolverError(
+      "sitekey do Turnstile ausente em /auth/provedores; defina TURNSTILE_SITEKEY",
+    );
   }
-  throw new SolverError(
-    "sitekey do Turnstile não encontrada em /login nem nos chunks JS; defina TURNSTILE_SITEKEY",
-  );
+  return sitekey;
 }

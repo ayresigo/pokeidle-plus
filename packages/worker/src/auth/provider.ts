@@ -8,7 +8,7 @@ import {
   type RespostaHttp,
 } from "../http.js";
 import { RefreshIndisponivelError, lerExpiracao, renovarTokens } from "./refresh.js";
-import { descobrirSitekey, resolverTurnstile, type SolucaoTurnstile } from "./solver.js";
+import { buscarSitekey, resolverTurnstile, type SolucaoTurnstile } from "./solver.js";
 
 export interface TokenProvider {
   getTokens(): Promise<Tokens>;
@@ -62,13 +62,20 @@ export interface DependenciasSolver {
 
 export type ConfigSolver = Pick<
   WorkerConfig,
-  "gameUrl" | "solverKey" | "pokeidleUser" | "pokeidlePass" | "solverApiUrl" | "turnstileSitekey"
+  | "gameUrl"
+  | "solverKey"
+  | "pokeidleUser"
+  | "pokeidlePass"
+  | "solverApiUrl"
+  | "turnstileSitekey"
+  | "dispositivo"
 >;
 
 async function loginComCaptcha(
   gameUrl: string,
   identifier: string,
   password: string,
+  dispositivo: string,
   captcha: SolucaoTurnstile,
   fetch: HttpFetch,
 ): Promise<Tokens> {
@@ -76,33 +83,35 @@ async function loginComCaptcha(
   if (captcha.userAgent) headers["user-agent"] = captcha.userAgent;
   let resposta: RespostaHttp;
   try {
-    resposta = await fetch(new URL("/api/auth/login", gameUrl).toString(), {
+    resposta = await fetch(new URL("/auth/entrar", gameUrl).toString(), {
       method: "POST",
       headers,
-      body: JSON.stringify({ identifier, password, captchaToken: captcha.token }),
+      body: JSON.stringify({
+        id: identifier,
+        senha: password,
+        turnstileToken: captcha.token,
+        dispositivo,
+      }),
     });
   } catch (erro) {
     throw new LoginError(`falha de rede no login: ${descreverFalhaDeRede(erro)}`);
   }
   const corpo = await lerJson(resposta);
   if (!resposta.ok) {
-    const mensagem =
-      typeof corpo.message === "string" && corpo.message !== ""
-        ? `: ${ocultarSegredos(corpo.message, [password, captcha.token])}`
+    const motivo =
+      typeof corpo.erro === "string" && corpo.erro !== ""
+        ? `: ${ocultarSegredos(corpo.erro, [password, captcha.token])}`
         : "";
-    throw new LoginError(`login recusado (HTTP ${resposta.status})${mensagem}`);
+    throw new LoginError(`login recusado (HTTP ${resposta.status})${motivo}`);
   }
-  if ("twoFactor" in corpo) throw new LoginError("conta com 2FA não suportada pelo worker");
-  const { accessToken, refreshToken } = corpo;
-  if (
-    typeof accessToken !== "string" ||
-    accessToken === "" ||
-    typeof refreshToken !== "string" ||
-    refreshToken === ""
-  ) {
-    throw new LoginError("resposta do login sem accessToken/refreshToken");
+  if (corpo.precisaNick === true) {
+    throw new LoginError("conta sem personagem (precisaNick)");
   }
-  return { accessToken, refreshToken };
+  const { token } = corpo;
+  if (typeof token !== "string" || token === "") {
+    throw new LoginError("resposta do login sem token");
+  }
+  return { accessToken: token, refreshToken: token };
 }
 
 export class SolverTokenProvider implements TokenProvider {
@@ -112,14 +121,21 @@ export class SolverTokenProvider implements TokenProvider {
   ) {}
 
   async getTokens(): Promise<Tokens> {
-    const { gameUrl, solverKey, pokeidleUser, pokeidlePass, solverApiUrl, turnstileSitekey } =
-      this.config;
+    const {
+      gameUrl,
+      solverKey,
+      pokeidleUser,
+      pokeidlePass,
+      solverApiUrl,
+      turnstileSitekey,
+      dispositivo,
+    } = this.config;
     if (!solverKey || !pokeidleUser || !pokeidlePass) {
       throw new AuthIndisponivelError("SOLVER_KEY/POKEIDLE_USER/POKEIDLE_PASS não configurados");
     }
-    const websiteKey = turnstileSitekey ?? (await descobrirSitekey(gameUrl, this.deps.fetchJogo));
+    const websiteKey = turnstileSitekey ?? (await buscarSitekey(gameUrl, this.deps.fetchJogo));
     const captcha = await resolverTurnstile(
-      { websiteURL: new URL("/login", gameUrl).toString(), websiteKey },
+      { websiteURL: new URL("/app", gameUrl).toString(), websiteKey },
       {
         apiUrl: solverApiUrl,
         clientKey: solverKey,
@@ -127,7 +143,14 @@ export class SolverTokenProvider implements TokenProvider {
         sleep: this.deps.sleep,
       },
     );
-    return loginComCaptcha(gameUrl, pokeidleUser, pokeidlePass, captcha, this.deps.fetchJogo);
+    return loginComCaptcha(
+      gameUrl,
+      pokeidleUser,
+      pokeidlePass,
+      dispositivo,
+      captcha,
+      this.deps.fetchJogo,
+    );
   }
 }
 
@@ -138,8 +161,6 @@ export type ResultadoAuth =
   | { ok: false; needsLogin: boolean; motivo: string };
 
 export interface OpcoesAuthManager {
-  gameUrl: string;
-  fetchJogo: HttpFetch;
   stored: TokenProvider;
   solver: TokenProvider;
   segredos: readonly (string | undefined)[];
@@ -227,7 +248,7 @@ export class AuthManager implements TokenProvider {
     if (this.parado) return RESULTADO_PARADO;
     let renovados: Tokens;
     try {
-      renovados = await this.refresh(atuais.refreshToken);
+      renovados = await this.refresh();
     } catch (erro) {
       const motivo = this.descrever("refresh", erro);
       if (erro instanceof RefreshIndisponivelError) return this.adiar(atuais, motivo);
@@ -337,19 +358,14 @@ export class AuthManager implements TokenProvider {
     return `${etapa}: ${ocultarSegredos(mensagem, segredos).slice(0, MAX_FALHA_CHARS)}`;
   }
 
-  private refresh(refreshToken: string): Promise<Tokens> {
-    return renovarTokens(refreshToken, {
-      gameUrl: this.opcoes.gameUrl,
-      fetch: this.opcoes.fetchJogo,
-    });
+  private refresh(): Promise<Tokens> {
+    return renovarTokens();
   }
 }
 
 export function criarAuthManager(config: WorkerConfig, health: HealthState): AuthManager {
   const fetchJogo = criarFetch(config.proxyUrl);
   return new AuthManager(health, {
-    gameUrl: config.gameUrl,
-    fetchJogo,
     stored: new StoredTokenProvider(config),
     solver: new SolverTokenProvider(config, { fetchJogo, fetchSolver: criarFetch() }),
     segredos: [config.pokeidlePass, config.solverKey, config.accessToken, config.refreshToken],

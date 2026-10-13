@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 export interface WorkerConfig {
   accountId: string;
   gameUrl: string;
@@ -14,6 +16,7 @@ export interface WorkerConfig {
   gameWsUrl: string;
   gameWsShards: number;
   huntSlug: string | undefined;
+  dispositivo: string;
 }
 
 export type WorkerEnv = Record<string, string | undefined>;
@@ -88,6 +91,7 @@ export function loadConfig(env: WorkerEnv): WorkerConfig {
   const gameWsPath = read(env, "GAME_WS_PATH") ?? DEFAULT_WS_PATH;
   const gameWsShardsRaw = read(env, "GAME_WS_SHARDS");
   const huntSlug = read(env, "HUNT_SLUG");
+  const dispositivo = read(env, "DISPOSITIVO") ?? randomUUID();
 
   if (!accountId) problems.push("ACCOUNT_ID ausente");
   if (!gameUrl) problems.push("GAME_URL ausente");
@@ -158,5 +162,6 @@ export function loadConfig(env: WorkerEnv): WorkerConfig {
     gameWsUrl: resolverWsUrl(gameWsUrlRaw ?? gameUrl, gameWsPath),
     gameWsShards,
     huntSlug,
+    dispositivo,
   };
 }
