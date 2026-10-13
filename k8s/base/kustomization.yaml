@@ -4,4 +4,4 @@ namespace: pokeidle
 resources: [namespace.yaml, central-api.yaml, ingress.yaml, postgres-backup-cronjob.yaml]
 images:
   - name: ghcr.io/ayresigo/mpw-central-api
-    newTag: 0.0.1-beta.2
+    newTag: 0.0.1-beta.4

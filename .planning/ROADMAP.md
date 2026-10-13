@@ -38,8 +38,9 @@ Etapas concluídas:
 
 **Milestone Goal:** contas farmando sozinhas por 24 h, sem intervenção, sem ban e sem cair em `needs-login`.
 
-- [ ] **Phase 1: Validação com conta real** - Confirmar em sessão real os pontos de GAME.md §9 e ajustar o worker ao que for observado
-- [ ] **Phase 01.1: Migrar worker para pokeidle.io** (INSERTED) - O jogo real é `pokeidle.io`; revisar a reescrita da validação, restaurar a robustez e tirar `poke.idleworld.online` do repo
+- [x] **Phase 1: Validação com conta real** - Confirmar em sessão real os pontos de GAME.md §9 e ajustar o worker ao que for observado (completed 2026-10-13; VAL-01..04 confirmados, VAL-05 refutado; correções absorvidas pela 01.1; VAL-06 ao vivo → backlog)
+- [x] **Phase 01.1: Migrar worker para pokeidle.io** (INSERTED) - O jogo real é `pokeidle.io`; revisar a reescrita da validação, restaurar a robustez e tirar `poke.idleworld.online` do repo
+ (completed 2026-10-13)
 - [ ] **Phase 2: Autoplay** - Comportamento autônomo do bot e supervisão que sobrevive a reinícios, até a run de 24 h
 - [x] **Phase 3: Página raiz da central** - `GET /` em pokeidle.ayresigo.dev responde algo útil em vez do 404 (completed 2026-10-12)
 
@@ -63,10 +64,10 @@ Etapas concluídas:
   5. Todo item de GAME.md §9 está marcado como confirmado, refutado ou não observável. Cada divergência virou correção no worker, com teste que reproduz o comportamento real e suíte verde.
 **Plans**: 5 plans
 - [ ] 1-PLAN.md — Instrumentação de observabilidade de kills (não gated; pré-condição de VAL-04/SC3)
-- [ ] 2-PLAN.md — Smoke manual de auth/sessão (VAL-01, VAL-02, VAL-06 auth)
-- [ ] 3-PLAN.md — Smoke manual de game loop, kills, shard e drain (VAL-02..VAL-06)
-- [ ] 4-PLAN.md — Correções no worker gated por evidência (VAL-01..VAL-07)
-- [ ] 5-PLAN.md — Gate final: §9 marcado + suíte do worker verde (VAL-07)
+- [x] 2-PLAN.md — Smoke manual de auth/sessão (VAL-01, VAL-02, VAL-06 auth)
+- [x] 3-PLAN.md — Smoke manual de game loop, kills, shard e drain (VAL-02..VAL-06)
+- [x] 4-PLAN.md — Correções no worker gated por evidência (VAL-01..VAL-07)
+- [x] 5-PLAN.md — Gate final: §9 marcado + suíte do worker verde (VAL-07)
 
 ### Phase 01.1: Migrar worker para pokeidle.io (INSERTED)
 **Goal**: O worker funciona contra o jogo que o usuário realmente joga, `https://pokeidle.io`, com a mesma robustez revisada no v1.0, e nenhuma parte do sistema aponta mais para `poke.idleworld.online`.
@@ -118,8 +119,8 @@ Etapas concluídas:
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Validação com conta real | v1.1 | 0/6 | Not started | - |
-| 01.1. Migrar worker para pokeidle.io | v1.1 | 5/6 | In progress (wave 6 gated) | - |
+| 1. Validação com conta real | v1.1 | 6/6 | Complete (absorvida pela 01.1) | 2026-10-13 |
+| 01.1. Migrar worker para pokeidle.io | v1.1 | 6/6 | Complete    | 2026-10-13 |
 | 2. Autoplay | v1.1 | 0/TBD | Not started | - |
 | 3. Página raiz da central | v1.1 | 1/1 | Complete    | 2026-10-12 |
 
@@ -132,7 +133,8 @@ Concerns relevantes de `.planning/codebase/CONCERNS.md` que nenhuma das 3 fases 
 - **CEN-01 — Rate limit na central:** `POST /auth/login` e `/auth/refresh` expostos na internet sem rate limit, lockout ou limite de tamanho da senha (argon2 com pod de 256Mi). Arquivos: `apps/central-api/src/auth/routes.ts`, `k8s/base/ingress.yaml`.
 - **CEN-02 — Logger do Fastify:** `Fastify()` sem `logger` em `apps/central-api/src/app.ts` e `apps/control-plane/src/app.ts`. Todo `request.log.error` é descartado e erros 500 não deixam rastro.
 - **QA-01 — E2E fora do CI:** `e2e/smoke.spec.ts` só roda localmente; `ci.yml`/`release.yml` não o executam nem fazem typecheck de `e2e/`.
-- **QA-02 — Helpers de teste duplicados:** `fabricarJwt` em 9 arquivos do control-plane, `criarOrchestratorFake`/`workerRodando` em 4, `limparBanco`/`seedUser` em 5 da central.
+- **ACC-01 — Registrar conta do jogo do zero:** cadastro em `/register` + Cloudflare Turnstile + verificação de e-mail + criação de personagem, para o painel criar contas novas em vez de só adicionar existentes (gancho "criar do zero" previsto na UI da Phase 2, D-UI). Depende do veredito do solver Turnstile na Phase 1 (VAL-01, confirmado no pokeidle.io). Origem: discussão da Phase 2 (`.planning/phases/02-autoplay/02-CONTEXT.md`, ideias adiadas).
+- **VAL-06b — Renovação de token ao vivo e sessão tomada:** confirmar em sessão longa o `sessao.renovada` (renova perto da metade dos ~30 dias) e o close 4001 real (exige abrir uma 2ª sessão). Mapeados pelo bundle e cobertos por testes na 01.1; falta a observação ao vivo. A run de 24 h da Phase 2 cobre parte disso.
 - **ACC-01 — Registrar conta do jogo do zero:** cadastro em `/register` + Cloudflare Turnstile + verificação de e-mail + criação de personagem, para o painel criar contas novas em vez de só adicionar existentes (gancho "criar do zero" previsto na UI da Phase 2, D-UI). Depende do veredito do solver Turnstile na Phase 1 (VAL-01). Origem: discussão da Phase 2 (`.planning/phases/02-autoplay/02-CONTEXT.md`, ideias adiadas).
 
 Os outros concerns (segurança do painel local e do `docker.sock`, semver das releases, recriação com env antigo, imagens de runtime inchadas, instrução `xargs docker rm` no README etc.) continuam em `.planning/codebase/CONCERNS.md`.
