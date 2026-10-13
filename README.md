@@ -31,7 +31,7 @@ O painel só escuta em `127.0.0.1`: ninguém da sua rede consegue acessá-lo, e 
 
 ### Cadastrar contas
 
-Em **Dashboard → Nova conta**, preencha usuário/senha do jogo e, se tiver, o proxy (use **testar proxy** para conferir o IP de saída). Depois clique em **Iniciar** na linha da conta.
+Em **Dashboard → Nova conta**, preencha usuário/senha do jogo e, se tiver, o proxy (use **testar proxy** para conferir o IP de saída). O campo **Hunt (slug)** é opcional: em branco, o worker mantém a hunt atual do personagem (o servidor retoma a última); preencha um slug (ex.: `bellsprout`) só para fixar outra hunt. Depois clique em **Iniciar** na linha da conta.
 
 Se a conta aparecer como **precisa de login**, cole o token do jogo:
 

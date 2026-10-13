@@ -5,6 +5,7 @@ export interface ValoresConta {
   pokeidleUser: string;
   pokeidlePass: string;
   proxyUrl: string;
+  huntSlug: string;
   solverKey: string;
   accessToken: string;
   refreshToken: string;
@@ -19,6 +20,7 @@ export const LIMITES: Record<CampoConta, number> = {
   pokeidleUser: 128,
   pokeidlePass: 256,
   proxyUrl: 512,
+  huntSlug: 64,
   solverKey: 2048,
   accessToken: 2048,
   refreshToken: 2048,
@@ -31,6 +33,7 @@ export const VALORES_VAZIOS: ValoresConta = {
   pokeidleUser: "",
   pokeidlePass: "",
   proxyUrl: "",
+  huntSlug: "",
   solverKey: "",
   accessToken: "",
   refreshToken: "",
@@ -80,6 +83,7 @@ export function corpoCriacao(valores: ValoresConta): AccountInput {
     pokeidleUser: valores.pokeidleUser.trim(),
     pokeidlePass: valores.pokeidlePass,
     ...(proxy !== "" && { proxyUrl: proxy }),
+    ...(valores.huntSlug.trim() !== "" && { huntSlug: valores.huntSlug.trim() }),
     ...(solverKey !== "" && { solverKey }),
     ...(accessToken !== "" && refreshToken !== "" && { accessToken, refreshToken }),
   };
@@ -94,6 +98,7 @@ export function corpoEdicao(valores: ValoresConta, atual: Account): AccountPatch
     ...(label !== atual.label && { label }),
     ...(pokeidleUser !== atual.pokeidleUser && { pokeidleUser }),
     ...(proxy !== "" && proxy !== atual.proxyUrl && { proxyUrl: proxy }),
+    ...(valores.huntSlug.trim() !== (atual.huntSlug ?? "") && { huntSlug: valores.huntSlug.trim() }),
     ...(valores.pokeidlePass !== "" && { pokeidlePass: valores.pokeidlePass }),
     ...(solverKey !== "" && { solverKey }),
   };

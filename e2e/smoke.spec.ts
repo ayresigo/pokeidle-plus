@@ -61,7 +61,7 @@ test("cria conta pelo form colando o token do pokeidle.io", async () => {
 test("iniciar mostra jogando ao vivo e última ação", async () => {
   await linha.getByRole("button", { name: "Iniciar" }).click();
   await expect(linha.getByText("jogando", { exact: true })).toBeVisible();
-  await expect(linha.getByRole("cell").nth(2)).toHaveText(/jogo|hunt/);
+  await expect(linha.getByRole("cell").nth(2)).toHaveText(/em hunt/);
   await expect(page.getByText("ao vivo", { exact: true })).toBeVisible();
   expect(containerExiste(nomeDoWorker(accountId))).toBe(true);
 });

@@ -46,6 +46,7 @@ model Account {
   accessTokenEnc   Bytes?
   refreshTokenEnc  Bytes?
   proxyUrl         String?
+  huntSlug         String?
   solverKeyEnc     Bytes?
   createdAt        DateTime @default(now())
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)

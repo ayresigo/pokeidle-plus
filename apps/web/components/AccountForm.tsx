@@ -130,7 +130,7 @@ export function AccountForm({ editar = false }: AccountFormProps) {
         setWorker(snapshot.find((w) => w.accountId === accountId) ?? null);
         setErroCarga(conta ? null : "conta não encontrada");
         if (conta) {
-          setValores({ ...VALORES_VAZIOS, label: conta.label, pokeidleUser: conta.pokeidleUser, proxyUrl: conta.proxyUrl ?? "" });
+          setValores({ ...VALORES_VAZIOS, label: conta.label, pokeidleUser: conta.pokeidleUser, proxyUrl: conta.proxyUrl ?? "", huntSlug: conta.huntSlug ?? "" });
         }
         setCarregando(false);
       },
@@ -231,7 +231,7 @@ export function AccountForm({ editar = false }: AccountFormProps) {
         setJsonTokens("");
         setOferecerRestart(estaRodando(worker));
       }
-      setValores({ ...VALORES_VAZIOS, label: conta.label, pokeidleUser: conta.pokeidleUser, proxyUrl: conta.proxyUrl ?? "" });
+      setValores({ ...VALORES_VAZIOS, label: conta.label, pokeidleUser: conta.pokeidleUser, proxyUrl: conta.proxyUrl ?? "", huntSlug: conta.huntSlug ?? "" });
       setAviso({ tipo: "ok", texto: tokens ? "alterações e tokens salvos" : "alterações salvas" });
     } catch (erro) {
       setAviso({ tipo: "erro", texto: mensagem(erro) });
@@ -419,6 +419,15 @@ export function AccountForm({ editar = false }: AccountFormProps) {
               onChange={alterar}
               placeholder={placeholderSegredo}
               dica="chave 2captcha-compatível para login automático"
+            />
+            <Campo
+              campo="huntSlug"
+              rotulo="Hunt (slug) (opcional)"
+              valores={valores}
+              erros={erros}
+              onChange={alterar}
+              placeholder="deixe vazio para o worker usar a hunt atual do personagem"
+              dica="slug da hunt a caçar (ex.: bellsprout); vazio = mantém a hunt do servidor"
             />
           </div>
           {!precisaLogin && secaoTokens}

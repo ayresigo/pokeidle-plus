@@ -84,27 +84,15 @@ function aoConectar(socket: WebSocket, req: IncomingMessage): void {
         autenticado = true;
         sockets.add(socket);
         log(`sessão aberta em ${url.pathname} (${sockets.size} ativa(s))`);
-        enviar(socket, { t: "welcome", estado: { xp: 0, gold: 0, items: {}, dexMud: {}, pkMud: {} } });
-        timer = setInterval(() => {
-          kills += 1;
-          enviar(socket, {
-            t: "batalha",
-            ev: [
-              {
-                k: "morte",
-                quem: "selvagem",
-                nome: ESPECIES[kills % ESPECIES.length],
-                xp: 10,
-                ouro: 5,
-              },
-            ],
-          });
-        }, INTERVALO_KILL_MS);
+        enviar(socket, {
+          t: "welcome",
+          estado: { xp: 0, gold: 0, items: {}, dexMud: {}, pkMud: {}, huntSlug: HUNT.slug },
+        });
         return;
       }
-      case "hunt.select":
+      case "hunt.select": {
         if (!autenticado) return;
-        return enviar(socket, {
+        enviar(socket, {
           t: "campo.init",
           slug: typeof m.slug === "string" ? m.slug : HUNT.slug,
           mapa: {},
@@ -112,6 +100,25 @@ function aoConectar(socket: WebSocket, req: IncomingMessage): void {
           heroi: {},
           mobs: [],
         });
+        if (timer === undefined) {
+          timer = setInterval(() => {
+            kills += 1;
+            enviar(socket, {
+              t: "batalha",
+              ev: [
+                {
+                  k: "morte",
+                  quem: "selvagem",
+                  nome: ESPECIES[kills % ESPECIES.length],
+                  xp: 10,
+                  ouro: 5,
+                },
+              ],
+            });
+          }, INTERVALO_KILL_MS);
+        }
+        return;
+      }
       case "ping":
         return enviar(socket, { t: "pong" });
     }

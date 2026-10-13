@@ -18,6 +18,7 @@ const conta: Account = {
   label: "Principal",
   pokeidleUser: "ash",
   proxyUrl: "http://proxy:8080",
+  huntSlug: null,
   createdAt: "2026-10-01T00:00:00.000Z",
 };
 
@@ -117,6 +118,12 @@ describe("corpoEdicao", () => {
     expect(
       corpoEdicao({ ...sem, label: "Nova", proxyUrl: "socks5://q:2", pokeidlePass: "nova", solverKey: "k", accessToken: "a", refreshToken: "r" }, conta),
     ).toEqual({ label: "Nova", proxyUrl: "socks5://q:2", pokeidlePass: "nova", solverKey: "k" });
+  });
+
+  it("envia huntSlug quando muda e omite quando igual ao atual", () => {
+    expect(corpoEdicao({ ...sem, huntSlug: "bellsprout" }, conta)).toEqual({ huntSlug: "bellsprout" });
+    expect(corpoEdicao({ ...sem, huntSlug: "" }, { ...conta, huntSlug: "bellsprout" })).toEqual({ huntSlug: "" });
+    expect(corpoEdicao({ ...sem, huntSlug: "oddish" }, { ...conta, huntSlug: "oddish" })).toEqual({});
   });
 });
 
