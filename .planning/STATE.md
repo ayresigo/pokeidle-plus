@@ -24,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-10-12)
 
 ## Current Position
 
-Phase: 01.1 (Migrar worker para pokeidle.io, INSERTED) — a planejar em worktree nova a partir da branch ayresigo/validacao-real
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-10-12 — VAL-01 revelou que o jogo real é pokeidle.io (não poke.idleworld.online); reescrita não revisada do worker congelada na branch validacao-real; Phase 01.1 inserida
+Phase: 01.1 (Migrar worker para pokeidle.io, INSERTED) — PLANEJADA no worktree migracao-pokeidle-io (branch ayresigo/migracao-pokeidle-io, merge da main feito)
+Plan: 6 plans escritos (1..6), aguardando aprovação do usuário para executar
+Status: Awaiting plan approval (não executar /gsd-execute-phase até o coordenador avisar)
+Last activity: 2026-10-13 — discuss 01.1 (D-S1..D-S6) + plano em 6 waves; smoke real gated por confirmação do usuário (D-S1)
 
 Progress: [██░░░░░░░░] 25% (1 de 4 fases)
 
@@ -70,7 +70,7 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Phase 01.1]: parte de código não revisado; robustez removida sem verificação (close codes, reciclagem, backoff de manutenção, invalidar 1×/5 min) precisa ser restaurada/adaptada ou removida com evidência.
+- [Phase 01.1]: revisão da reescrita planejada em 6 waves. Robustez AUSENTE a tratar (gated por smoke, D-S3): tratamento diferenciado de close codes / sessão substituída / manutenção; reciclagem (restart-freeze/restart-resumed, do protocolo antigo). PRESENTE (só confirmar+testar): `invalidar` 1×/5 min (`INTERVALO_MINIMO_INVALIDAR_MS`, client.ts:66), backoff+jitter+teto longo, heartbeat, watchdog-stall, drain 1000. RESÍDUO a remover: sharding `GAME_WS_SHARDS`/djb2 morto no config.
 - [Phase 2]: o plano atual (branch ayresigo/autoplay) usa endpoints do servidor errado; replanejar após a 01.1.
 - [Phase 1/2]: uma sessão viva por conta (4005). Smoke e run de 24 h não podem usar a mesma conta ao mesmo tempo.
 - [Phase 3]: o deploy no `tcgreaper` (`kubectl apply`) exige confirmação explícita do usuário.
