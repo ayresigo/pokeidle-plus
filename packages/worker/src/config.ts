@@ -14,7 +14,6 @@ export interface WorkerConfig {
   solverApiUrl: string;
   turnstileSitekey: string | undefined;
   gameWsUrl: string;
-  gameWsShards: number;
   huntSlug: string | undefined;
   dispositivo: string;
 }
@@ -33,7 +32,6 @@ const WS_PROTOCOLS: Record<string, true> = {
 };
 const WS_SCHEME: Record<string, string> = { "http:": "ws:", "https:": "wss:" };
 const DEFAULT_WS_PATH = "/";
-const DEFAULT_WS_SHARDS = 88;
 
 export class ConfigError extends Error {
   readonly problems: readonly string[];
@@ -89,7 +87,6 @@ export function loadConfig(env: WorkerEnv): WorkerConfig {
   const turnstileSitekey = read(env, "TURNSTILE_SITEKEY");
   const gameWsUrlRaw = read(env, "GAME_WS_URL");
   const gameWsPath = read(env, "GAME_WS_PATH") ?? DEFAULT_WS_PATH;
-  const gameWsShardsRaw = read(env, "GAME_WS_SHARDS");
   const huntSlug = read(env, "HUNT_SLUG");
   const dispositivo = read(env, "DISPOSITIVO") ?? randomUUID();
 
@@ -105,13 +102,6 @@ export function loadConfig(env: WorkerEnv): WorkerConfig {
 
   if (!gameWsPath.startsWith("/")) {
     problems.push("GAME_WS_PATH inválido (esperado path começando com /)");
-  }
-
-  let gameWsShards = DEFAULT_WS_SHARDS;
-  if (gameWsShardsRaw) {
-    const shards = /^\d+$/.test(gameWsShardsRaw) ? Number(gameWsShardsRaw) : 0;
-    if (shards < 1) problems.push("GAME_WS_SHARDS inválido (esperado inteiro >= 1)");
-    else gameWsShards = shards;
   }
 
   if (solverKey) {
@@ -160,7 +150,6 @@ export function loadConfig(env: WorkerEnv): WorkerConfig {
     solverApiUrl,
     turnstileSitekey,
     gameWsUrl: resolverWsUrl(gameWsUrlRaw ?? gameUrl, gameWsPath),
-    gameWsShards,
     huntSlug,
     dispositivo,
   };

@@ -31,7 +31,6 @@ const configBase: WorkerConfig = {
   solverApiUrl: "https://api.2captcha.com",
   turnstileSitekey: undefined,
   gameWsUrl: "wss://jogo.example/ws",
-  gameWsShards: 88,
   huntSlug: undefined,
   dispositivo: "dispositivo-fixo-123",
 };

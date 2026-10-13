@@ -397,7 +397,10 @@ export class GameClient implements ClienteJogo {
         this.aoErro(m);
         return;
       case "sessao.renovada":
-        if (typeof m.token === "string" && m.token) this.tokenHello = m.token;
+        if (typeof m.token === "string" && m.token) {
+          this.tokenHello = m.token;
+          this.opcoes.health.setTokens({ accessToken: m.token, refreshToken: m.token });
+        }
         return;
       case "pong":
         return;

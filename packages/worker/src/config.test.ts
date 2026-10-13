@@ -41,7 +41,6 @@ describe("loadConfig", () => {
       solverApiUrl: "https://api.2captcha.com",
       turnstileSitekey: undefined,
       gameWsUrl: "wss://pokeidle.example/",
-      gameWsShards: 88,
       huntSlug: undefined,
       dispositivo: "dispositivo-fixo-123",
     });
@@ -64,16 +63,14 @@ describe("loadConfig", () => {
     expect(config.gameWsUrl).toBe("ws://127.0.0.1:8080/");
   });
 
-  it("aceita GAME_WS_URL, GAME_WS_PATH, GAME_WS_SHARDS e HUNT_SLUG", () => {
+  it("aceita GAME_WS_URL, GAME_WS_PATH e HUNT_SLUG", () => {
     const config = loadConfig({
       ...comTokens,
       GAME_WS_URL: "wss://ws.pokeidle.example:8443",
       GAME_WS_PATH: "/socket",
-      GAME_WS_SHARDS: "4",
       HUNT_SLUG: "caterpie",
     });
     expect(config.gameWsUrl).toBe("wss://ws.pokeidle.example:8443/socket");
-    expect(config.gameWsShards).toBe(4);
     expect(config.huntSlug).toBe("caterpie");
   });
 
@@ -90,11 +87,6 @@ describe("loadConfig", () => {
   it("rejeita GAME_WS_PATH sem barra inicial", () => {
     const erro = erroDe({ ...comTokens, GAME_WS_PATH: "ws" });
     expect(erro.message).toContain("GAME_WS_PATH");
-  });
-
-  it.each(["0", "abc", "2.5"])("rejeita GAME_WS_SHARDS inválido %s", (valor) => {
-    const erro = erroDe({ ...comTokens, GAME_WS_SHARDS: valor });
-    expect(erro.message).toContain("GAME_WS_SHARDS");
   });
 
   it("rejeita GAME_URL que não é URL http(s)", () => {

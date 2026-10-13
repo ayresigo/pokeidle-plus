@@ -261,6 +261,23 @@ describe("GameClient: handshake e eventos", () => {
     const c = novoCliente();
     expect(() => c.selecionarHunt("x")).toThrow("desconectado");
   });
+
+  it("sessao.renovada troca o token em uso e publica via health.setTokens", async () => {
+    const c = novoCliente();
+    c.conectar();
+    const conexao = await servidor.conexao(0);
+    servidor.emitir(conexao, { t: "welcome", estado: {} });
+    await vi.waitFor(() => expect(health.snapshot().state).toBe("in-game"));
+    expect(health.snapshot().tokens).toBeUndefined();
+
+    servidor.emitir(conexao, { t: "sessao.renovada", token: "token-renovado-ws" });
+    await vi.waitFor(() =>
+      expect(health.snapshot().tokens).toEqual({
+        accessToken: "token-renovado-ws",
+        refreshToken: "token-renovado-ws",
+      }),
+    );
+  });
 });
 
 describe("GameClient: fechamentos e reconexão", () => {
