@@ -227,6 +227,7 @@ describe("accounts", () => {
         refreshToken: "ref-pokeidle",
         solverKey: "chave-solver",
         proxyUrl: "http://proxy:8080",
+        huntSlug: null,
       });
     });
 
@@ -246,7 +247,72 @@ describe("accounts", () => {
         refreshToken: null,
         solverKey: null,
         proxyUrl: null,
+        huntSlug: null,
       });
+    });
+  });
+
+  describe("huntSlug", () => {
+    it("POST com huntSlug vazio grava null", async () => {
+      const { accessToken } = await seedUser("brock");
+      const criada = await criarConta(accessToken, { huntSlug: "" });
+      expect(criada.statusCode).toBe(201);
+      expect(criada.json().huntSlug).toBeNull();
+      const salvo = await prisma.account.findUniqueOrThrow({ where: { id: criada.json().id } });
+      expect(salvo.huntSlug).toBeNull();
+    });
+
+    it("cria, atualiza e lê huntSlug sem criptografar", async () => {
+      const { accessToken } = await seedUser("ash");
+      const criada = await criarConta(accessToken, { huntSlug: "bellsprout" });
+      expect(criada.statusCode).toBe(201);
+      expect(criada.json().huntSlug).toBe("bellsprout");
+      const id = criada.json().id;
+
+      const salvo = await prisma.account.findUniqueOrThrow({ where: { id } });
+      expect(salvo.huntSlug).toBe("bellsprout");
+
+      const creds = await app.inject({
+        method: "GET",
+        url: `/accounts/${id}/credentials`,
+        headers: authed(accessToken),
+      });
+      expect(creds.json().huntSlug).toBe("bellsprout");
+
+      const patch = await app.inject({
+        method: "PATCH",
+        url: `/accounts/${id}`,
+        headers: authed(accessToken),
+        payload: { huntSlug: "oddish" },
+      });
+      expect(patch.statusCode).toBe(200);
+      expect(patch.json().huntSlug).toBe("oddish");
+      const atualizado = await prisma.account.findUniqueOrThrow({ where: { id } });
+      expect(atualizado.huntSlug).toBe("oddish");
+    });
+
+    it("PATCH com huntSlug vazio volta a null", async () => {
+      const { accessToken } = await seedUser("may");
+      const criada = await criarConta(accessToken, { huntSlug: "bellsprout" });
+      const id = criada.json().id;
+      const patch = await app.inject({
+        method: "PATCH",
+        url: `/accounts/${id}`,
+        headers: authed(accessToken),
+        payload: { huntSlug: "" },
+      });
+      expect(patch.statusCode).toBe(200);
+      expect(patch.json().huntSlug).toBeNull();
+      const atualizado = await prisma.account.findUniqueOrThrow({ where: { id } });
+      expect(atualizado.huntSlug).toBeNull();
+    });
+
+    it("ausente fica null e não está entre campos criptografados", async () => {
+      const { accessToken } = await seedUser("ash");
+      const criada = await criarConta(accessToken);
+      const salvo = await prisma.account.findUniqueOrThrow({ where: { id: criada.json().id } });
+      expect(salvo.huntSlug).toBeNull();
+      expect(Object.keys(salvo)).not.toContain("huntSlugEnc");
     });
   });
 

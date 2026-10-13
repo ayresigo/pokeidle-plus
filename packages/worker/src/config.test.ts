@@ -27,7 +27,7 @@ function erroDe(env: Record<string, string | undefined>): ConfigError {
 
 describe("loadConfig", () => {
   it("aceita só tokens e aplica defaults", () => {
-    expect(loadConfig(comTokens)).toEqual({
+    expect(loadConfig({ ...comTokens, DISPOSITIVO: "dispositivo-fixo-123" })).toEqual({
       accountId: "conta-1",
       gameUrl: "https://pokeidle.example",
       accessToken: "access-secreto",
@@ -40,27 +40,46 @@ describe("loadConfig", () => {
       healthPort: 3001,
       solverApiUrl: "https://api.2captcha.com",
       turnstileSitekey: undefined,
-      gameWsUrl: "wss://pokeidle.example/ws",
-      gameWsShards: 88,
+      gameWsUrl: "wss://pokeidle.example/",
       huntSlug: undefined,
+      dispositivo: "dispositivo-fixo-123",
     });
+  });
+
+  it("gera um dispositivo UUID quando DISPOSITIVO está ausente", () => {
+    const config = loadConfig(comTokens);
+    expect(config.dispositivo).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+  });
+
+  it("o dispositivo é determinístico por ACCOUNT_ID (estável entre processos)", () => {
+    const a1 = loadConfig({ ...comTokens, ACCOUNT_ID: "conta-A" }).dispositivo;
+    const a2 = loadConfig({ ...comTokens, ACCOUNT_ID: "conta-A" }).dispositivo;
+    const b = loadConfig({ ...comTokens, ACCOUNT_ID: "conta-B" }).dispositivo;
+    expect(a1).toBe(a2);
+    expect(a1).not.toBe(b);
+    expect(a1).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  });
+
+  it("usa o DISPOSITIVO do env quando presente", () => {
+    const config = loadConfig({ ...comSolver, DISPOSITIVO: "uuid-do-cliente" });
+    expect(config.dispositivo).toBe("uuid-do-cliente");
   });
 
   it("deriva ws:// de GAME_URL http", () => {
     const config = loadConfig({ ...comTokens, GAME_URL: "http://127.0.0.1:8080" });
-    expect(config.gameWsUrl).toBe("ws://127.0.0.1:8080/ws");
+    expect(config.gameWsUrl).toBe("ws://127.0.0.1:8080/");
   });
 
-  it("aceita GAME_WS_URL, GAME_WS_PATH, GAME_WS_SHARDS e HUNT_SLUG", () => {
+  it("aceita GAME_WS_URL, GAME_WS_PATH e HUNT_SLUG", () => {
     const config = loadConfig({
       ...comTokens,
       GAME_WS_URL: "wss://ws.pokeidle.example:8443",
       GAME_WS_PATH: "/socket",
-      GAME_WS_SHARDS: "4",
       HUNT_SLUG: "caterpie",
     });
     expect(config.gameWsUrl).toBe("wss://ws.pokeidle.example:8443/socket");
-    expect(config.gameWsShards).toBe(4);
     expect(config.huntSlug).toBe("caterpie");
   });
 
@@ -77,11 +96,6 @@ describe("loadConfig", () => {
   it("rejeita GAME_WS_PATH sem barra inicial", () => {
     const erro = erroDe({ ...comTokens, GAME_WS_PATH: "ws" });
     expect(erro.message).toContain("GAME_WS_PATH");
-  });
-
-  it.each(["0", "abc", "2.5"])("rejeita GAME_WS_SHARDS inválido %s", (valor) => {
-    const erro = erroDe({ ...comTokens, GAME_WS_SHARDS: valor });
-    expect(erro.message).toContain("GAME_WS_SHARDS");
   });
 
   it("rejeita GAME_URL que não é URL http(s)", () => {

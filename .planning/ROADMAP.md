@@ -80,7 +80,13 @@ Etapas concluídas:
   4. Nenhuma referência funcional a `poke.idleworld.online` sobra no repo: `GAME_URL` padrão do control-plane, instrução de colar tokens na UI (formato real do `pokeidle.io`), `e2e/fake-game` imitando o protocolo do `pokeidle.io`, README e página raiz da central.
   5. Smoke real na conta descartável: login via solver, `welcome`, kills subindo, drain limpo; VAL-05 (farm offline/`sleep-mode`) e VAL-06 (re-login/refresh) concluídos; as observações read-only do 6-PLAN da Phase 1 (fontes do dashboard, formatos de eventos, cura/potions, catálogos) registradas para a Phase 2. Nada pago na conta real.
   6. E2E (`pnpm e2e`) verde contra o fake-game novo, e uma release beta publicada com o worker migrado.
-**Plans**: TBD (run `/gsd-plan-phase 01.1`)
+**Plans**: 6 plans
+- [x] 1-PLAN.md — GAME.md: pokeidle.io como fonte única (MIG-01, SC1) ✅ 2026-10-13
+- [x] 2-PLAN.md — Revisão da auth do worker + modelo de token (MIG-02, SC2) ✅ 2026-10-13
+- [x] 3-PLAN.md — Revisão do game loop/WS + limpeza de sharding + sessao.renovada (MIG-03, SC2) ✅ 2026-10-13
+- [x] 4-PLAN.md — Migração de domínio/protocolo fora do worker + E2E verde (MIG-05, SC4, parte de SC6) ✅ 2026-10-13
+- [x] 5-PLAN.md — Cobertura de testes do worker ao nível do v1.0 (MIG-04, SC3) ✅ 2026-10-13
+- [ ] 6-PLAN.md — Smoke real gated + robustez de fechamento gated por evidência + VAL-05/06 + beta (MIG-06, SC5/SC6)
 
 ### Phase 2: Autoplay
 **Goal**: As contas do jogador farmam sozinhas por 24 h: o bot caça, repõe pokébolas e consumíveis, vende loot, segue uma rotina e reage aos eventos do jogo, e a supervisão sobrevive a reinícios. As políticas concretas (hunt, compras, vendas, horários, eventos) são decididas com o usuário no `/gsd-discuss-phase 2`.
@@ -113,7 +119,7 @@ Etapas concluídas:
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1. Validação com conta real | v1.1 | 0/6 | Not started | - |
-| 01.1. Migrar worker para pokeidle.io | v1.1 | 0/TBD | Not started | - |
+| 01.1. Migrar worker para pokeidle.io | v1.1 | 5/6 | In progress (wave 6 gated) | - |
 | 2. Autoplay | v1.1 | 0/TBD | Not started | - |
 | 3. Página raiz da central | v1.1 | 1/1 | Complete    | 2026-10-12 |
 

@@ -34,6 +34,7 @@ export interface Account {
   label: string;
   pokeidleUser: string;
   proxyUrl: string | null;
+  huntSlug: string | null;
   createdAt: string;
 }
 
@@ -42,6 +43,7 @@ export interface AccountInput {
   pokeidleUser: string;
   pokeidlePass: string;
   proxyUrl?: string;
+  huntSlug?: string;
   solverKey?: string;
   accessToken?: string;
   refreshToken?: string;

@@ -67,7 +67,7 @@ export function buildApp(opts?: BuildAppOpts) {
     supervisor,
     centralApiUrl,
     workerImage,
-    gameUrl: opts?.gameUrl ?? process.env.GAME_URL ?? "https://poke.idleworld.online",
+    gameUrl: opts?.gameUrl ?? process.env.GAME_URL ?? "https://pokeidle.io",
     controlPlaneUrl:
       opts?.controlPlaneUrl ??
       process.env.CONTROL_PLANE_URL ??

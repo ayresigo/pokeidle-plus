@@ -31,14 +31,14 @@ O painel só escuta em `127.0.0.1`: ninguém da sua rede consegue acessá-lo, e 
 
 ### Cadastrar contas
 
-Em **Dashboard → Nova conta**, preencha usuário/senha do jogo e, se tiver, o proxy (use **testar proxy** para conferir o IP de saída). Depois clique em **Iniciar** na linha da conta.
+Em **Dashboard → Nova conta**, preencha usuário/senha do jogo e, se tiver, o proxy (use **testar proxy** para conferir o IP de saída). O campo **Hunt (slug)** é opcional: em branco, o worker mantém a hunt atual do personagem (o servidor retoma a última); preencha um slug (ex.: `bellsprout`) só para fixar outra hunt. Depois clique em **Iniciar** na linha da conta.
 
-Se a conta aparecer como **precisa de login**, cole os tokens do jogo:
+Se a conta aparecer como **precisa de login**, cole o token do jogo:
 
-1. No navegador normal, entre em https://poke.idleworld.online com essa conta.
-2. Aperte F12 → aba **Console**.
-3. Rode `sessionStorage.getItem('pokeweb:tokens')` e copie o texto inteiro.
-4. Cole no campo **JSON de pokeweb:tokens** da conta, salve e reinicie o worker.
+1. No navegador normal, entre em https://pokeidle.io com essa conta.
+2. Aperte F12 → aba **Application** (ou **Armazenamento**) → **Local Storage** → `pokeidle.io`.
+3. Copie o valor do token Bearer de sessão guardado ali (o texto longo).
+4. Cole no campo **Token do pokeidle.io** da conta, salve e reinicie o worker.
 5. Não jogue mais com essa conta naquele navegador: o jogo só aceita uma sessão por conta.
 
 ### Atualizar
@@ -158,7 +158,7 @@ pnpm e2e
 ```
 
 - Builda `ghcr.io/ayresigo/mpw-{web,control-plane,worker,central-api,fake-game}:e2e` (`VERSION=0.0.1-e2e`) e sobe `e2e/docker-compose.e2e.yml` como projeto `mpw-e2e` (rede `mpw-e2e`, web em `127.0.0.1:3100`, central em `:3101`, jogo falso em `:3102`). Precisa dessas portas livres e do Docker Desktop aberto.
-- O jogo falso (`e2e/fake-game`) aceita só o JWT fake de `e2e/fake-game/token.ts`, manda `field-init`/`field-kill` e tem `POST /__e2e/kick`, que derruba as sessões com WS 4005.
+- O jogo falso (`e2e/fake-game`) fala o protocolo do `pokeidle.io`: `GET /auth/provedores`, `POST /auth/entrar` e um WS raw que aceita só o JWT fake de `e2e/fake-game/token.ts` no `hello`, responde `welcome`/`campo.init`, emite `batalha`/`morte` e tem `POST /__e2e/kick`, que derruba as sessões.
 - No fim, remove os workers que o teste criou (`mpw-worker-<id>`, pelo nome exato) e roda `docker compose -p mpw-e2e down -v`, que só apaga volumes do projeto `mpw-e2e`. Se o teste for interrompido: `pnpm --filter e2e e2e:down`.
 - `E2E_SKIP_BUILD=1` reaproveita as imagens já buildadas; `E2E_KEEP=1` deixa o ambiente de pé para depurar.
 - Recusa rodar se existir um container `mpw-updater` (de uma instalação real), porque o control-plane do teste o inspecionaria. Não rode com a instalação real (`mpw`) com workers ativos: os dois control-planes enxergam os containers com label `mpw.managed=true`.

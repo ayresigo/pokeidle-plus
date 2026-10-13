@@ -129,6 +129,7 @@ function inspecaoPadrao(accountId: string): WorkerInspect {
       POKEIDLE_PASS: "senha-secreta",
       ACCESS_TOKEN: `access-velho-${accountId}`,
       REFRESH_TOKEN: `refresh-velho-${accountId}`,
+      HUNT_SLUG: "e2e-hunt",
     },
     labels: {
       "mpw.managed": "true",

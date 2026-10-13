@@ -8,11 +8,19 @@ import {
 } from "../http.js";
 
 export class SolverError extends Error {
-  constructor(mensagem: string) {
+  readonly transitorio: boolean;
+  constructor(mensagem: string, transitorio = false) {
     super(mensagem);
     this.name = "SolverError";
+    this.transitorio = transitorio;
   }
 }
+
+const CODIGOS_SOLVER_DEFINITIVOS: Record<string, true> = {
+  ERROR_KEY_DOES_NOT_EXIST: true,
+  ERROR_ZERO_BALANCE: true,
+  ERROR_WRONG_USER_KEY: true,
+};
 
 export interface AlvoTurnstile {
   websiteURL: string;
@@ -46,15 +54,22 @@ async function postarSolver(
       body: JSON.stringify(corpo),
     });
   } catch (erro) {
-    throw new SolverError(`falha de rede no solver: ${descreverFalhaDeRede(erro)}`);
+    throw new SolverError(`falha de rede no solver: ${descreverFalhaDeRede(erro)}`, true);
   }
   if (!resposta.ok) {
     await descartarCorpo(resposta);
-    throw new SolverError(`solver respondeu HTTP ${resposta.status}`);
+    throw new SolverError(
+      `solver respondeu HTTP ${resposta.status}`,
+      resposta.status >= 500 || resposta.status === 429,
+    );
   }
   const dados = await lerJson(resposta);
   if (dados.errorId !== 0) {
-    throw new SolverError(`solver retornou erro ${String(dados.errorCode ?? dados.errorId)}`);
+    const codigo = typeof dados.errorCode === "string" ? dados.errorCode : "";
+    throw new SolverError(
+      `solver retornou erro ${codigo || String(dados.errorId)}`,
+      !CODIGOS_SOLVER_DEFINITIVOS[codigo],
+    );
   }
   return dados;
 }
@@ -85,7 +100,7 @@ export async function resolverTurnstile(
     const resultado = await postarSolver(`${apiUrl}/getTaskResult`, { clientKey, taskId }, fetch);
     if (resultado.status === "processing") continue;
     if (resultado.status !== "ready") {
-      throw new SolverError(`status inesperado do solver: ${String(resultado.status)}`);
+      throw new SolverError(`status inesperado do solver: ${String(resultado.status)}`, true);
     }
     const solucao: Record<string, unknown> =
       typeof resultado.solution === "object" && resultado.solution !== null
@@ -97,43 +112,30 @@ export async function resolverTurnstile(
     }
     return typeof userAgent === "string" && userAgent !== "" ? { token, userAgent } : { token };
   }
-  throw new SolverError(`tempo esgotado aguardando o solver (${maxConsultas} consultas)`);
+  throw new SolverError(`tempo esgotado aguardando o solver (${maxConsultas} consultas)`, true);
 }
 
-export function extrairSitekey(texto: string): string | null {
-  const atributo = /data-sitekey=["']([^"']+)["']/.exec(texto);
-  if (atributo?.[1]) return atributo[1];
-  return /["'](0x4AAAAAA[\w-]{10,})["']/.exec(texto)?.[1] ?? null;
-}
-
-export function listarChunks(html: string): string[] {
-  return [...new Set(html.match(/\/_next\/static\/chunks\/[\w.~-]+\.js/g) ?? [])];
-}
-
-async function baixarTexto(url: string, fetch: HttpFetch): Promise<string> {
+export async function buscarSitekey(gameUrl: string, fetch: HttpFetch): Promise<string> {
+  const url = new URL("/auth/provedores", gameUrl).toString();
   let resposta: RespostaHttp;
   try {
     resposta = await fetch(url, { method: "GET" });
   } catch (erro) {
-    throw new SolverError(`falha de rede ao baixar ${url}: ${descreverFalhaDeRede(erro)}`);
+    throw new SolverError(`falha de rede ao buscar provedores: ${descreverFalhaDeRede(erro)}`, true);
   }
   if (!resposta.ok) {
     await descartarCorpo(resposta);
-    throw new SolverError(`GET ${url} respondeu HTTP ${resposta.status}`);
+    throw new SolverError(
+      `GET ${url} respondeu HTTP ${resposta.status}`,
+      resposta.status >= 500 || resposta.status === 429,
+    );
   }
-  return resposta.text();
-}
-
-export async function descobrirSitekey(gameUrl: string, fetch: HttpFetch): Promise<string> {
-  const html = await baixarTexto(new URL("/login", gameUrl).toString(), fetch);
-  const doHtml = extrairSitekey(html);
-  if (doHtml) return doHtml;
-
-  for (const chunk of listarChunks(html)) {
-    const sitekey = extrairSitekey(await baixarTexto(new URL(chunk, gameUrl).toString(), fetch));
-    if (sitekey) return sitekey;
+  const corpo = await lerJson(resposta);
+  const sitekey = corpo.turnstile;
+  if (typeof sitekey !== "string" || sitekey === "") {
+    throw new SolverError(
+      "sitekey do Turnstile ausente em /auth/provedores; defina TURNSTILE_SITEKEY",
+    );
   }
-  throw new SolverError(
-    "sitekey do Turnstile não encontrada em /login nem nos chunks JS; defina TURNSTILE_SITEKEY",
-  );
+  return sitekey;
 }

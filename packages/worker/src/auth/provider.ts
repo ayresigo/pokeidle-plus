@@ -7,8 +7,8 @@ import {
   type HttpFetch,
   type RespostaHttp,
 } from "../http.js";
-import { RefreshIndisponivelError, lerExpiracao, renovarTokens } from "./refresh.js";
-import { descobrirSitekey, resolverTurnstile, type SolucaoTurnstile } from "./solver.js";
+import { lerExpiracao } from "./refresh.js";
+import { buscarSitekey, resolverTurnstile, SolverError, type SolucaoTurnstile } from "./solver.js";
 
 export interface TokenProvider {
   getTokens(): Promise<Tokens>;
@@ -29,11 +29,24 @@ export class AuthAdiadaError extends Error {
 }
 
 export class LoginError extends Error {
-  constructor(mensagem: string) {
+  readonly transitorio: boolean;
+  constructor(mensagem: string, transitorio = false) {
     super(mensagem);
     this.name = "LoginError";
+    this.transitorio = transitorio;
   }
 }
+
+export function ehTransitorio(erro: unknown): boolean {
+  return (erro instanceof SolverError || erro instanceof LoginError) && erro.transitorio;
+}
+
+const CHAVES_LOGIN_TRANSITORIAS: Record<string, true> = {
+  "login.turnstileFalhou": true,
+  "login.muitasTentativas": true,
+  "login.entrando": true,
+  "login.criando": true,
+};
 
 export function ocultarSegredos(texto: string, segredos: readonly (string | undefined)[]): string {
   return segredos.reduce<string>(
@@ -62,13 +75,20 @@ export interface DependenciasSolver {
 
 export type ConfigSolver = Pick<
   WorkerConfig,
-  "gameUrl" | "solverKey" | "pokeidleUser" | "pokeidlePass" | "solverApiUrl" | "turnstileSitekey"
+  | "gameUrl"
+  | "solverKey"
+  | "pokeidleUser"
+  | "pokeidlePass"
+  | "solverApiUrl"
+  | "turnstileSitekey"
+  | "dispositivo"
 >;
 
 async function loginComCaptcha(
   gameUrl: string,
   identifier: string,
   password: string,
+  dispositivo: string,
   captcha: SolucaoTurnstile,
   fetch: HttpFetch,
 ): Promise<Tokens> {
@@ -76,33 +96,40 @@ async function loginComCaptcha(
   if (captcha.userAgent) headers["user-agent"] = captcha.userAgent;
   let resposta: RespostaHttp;
   try {
-    resposta = await fetch(new URL("/api/auth/login", gameUrl).toString(), {
+    resposta = await fetch(new URL("/auth/entrar", gameUrl).toString(), {
       method: "POST",
       headers,
-      body: JSON.stringify({ identifier, password, captchaToken: captcha.token }),
+      body: JSON.stringify({
+        id: identifier,
+        senha: password,
+        turnstileToken: captcha.token,
+        dispositivo,
+      }),
     });
   } catch (erro) {
-    throw new LoginError(`falha de rede no login: ${descreverFalhaDeRede(erro)}`);
+    throw new LoginError(`falha de rede no login: ${descreverFalhaDeRede(erro)}`, true);
   }
   const corpo = await lerJson(resposta);
   if (!resposta.ok) {
-    const mensagem =
-      typeof corpo.message === "string" && corpo.message !== ""
-        ? `: ${ocultarSegredos(corpo.message, [password, captcha.token])}`
+    const motivo =
+      typeof corpo.erro === "string" && corpo.erro !== ""
+        ? `: ${ocultarSegredos(corpo.erro, [password, captcha.token])}`
         : "";
-    throw new LoginError(`login recusado (HTTP ${resposta.status})${mensagem}`);
+    const chave = typeof corpo.erro === "string" ? corpo.erro : "";
+    throw new LoginError(
+      `login recusado (HTTP ${resposta.status})${motivo}`,
+      resposta.status >= 500 || resposta.status === 429 || CHAVES_LOGIN_TRANSITORIAS[chave] === true,
+    );
   }
-  if ("twoFactor" in corpo) throw new LoginError("conta com 2FA não suportada pelo worker");
-  const { accessToken, refreshToken } = corpo;
-  if (
-    typeof accessToken !== "string" ||
-    accessToken === "" ||
-    typeof refreshToken !== "string" ||
-    refreshToken === ""
-  ) {
-    throw new LoginError("resposta do login sem accessToken/refreshToken");
+  if (corpo.precisaNick === true) {
+    throw new LoginError("conta sem personagem (precisaNick)");
   }
-  return { accessToken, refreshToken };
+  const { token } = corpo;
+  if (typeof token !== "string" || token === "") {
+    throw new LoginError("resposta do login sem token");
+  }
+  const nick = typeof corpo.nick === "string" && corpo.nick !== "" ? corpo.nick : undefined;
+  return { accessToken: token, refreshToken: token, nick };
 }
 
 export class SolverTokenProvider implements TokenProvider {
@@ -112,14 +139,21 @@ export class SolverTokenProvider implements TokenProvider {
   ) {}
 
   async getTokens(): Promise<Tokens> {
-    const { gameUrl, solverKey, pokeidleUser, pokeidlePass, solverApiUrl, turnstileSitekey } =
-      this.config;
+    const {
+      gameUrl,
+      solverKey,
+      pokeidleUser,
+      pokeidlePass,
+      solverApiUrl,
+      turnstileSitekey,
+      dispositivo,
+    } = this.config;
     if (!solverKey || !pokeidleUser || !pokeidlePass) {
       throw new AuthIndisponivelError("SOLVER_KEY/POKEIDLE_USER/POKEIDLE_PASS não configurados");
     }
-    const websiteKey = turnstileSitekey ?? (await descobrirSitekey(gameUrl, this.deps.fetchJogo));
+    const websiteKey = turnstileSitekey ?? (await buscarSitekey(gameUrl, this.deps.fetchJogo));
     const captcha = await resolverTurnstile(
-      { websiteURL: new URL("/login", gameUrl).toString(), websiteKey },
+      { websiteURL: new URL("/app", gameUrl).toString(), websiteKey },
       {
         apiUrl: solverApiUrl,
         clientKey: solverKey,
@@ -127,19 +161,24 @@ export class SolverTokenProvider implements TokenProvider {
         sleep: this.deps.sleep,
       },
     );
-    return loginComCaptcha(gameUrl, pokeidleUser, pokeidlePass, captcha, this.deps.fetchJogo);
+    return loginComCaptcha(
+      gameUrl,
+      pokeidleUser,
+      pokeidlePass,
+      dispositivo,
+      captcha,
+      this.deps.fetchJogo,
+    );
   }
 }
 
-export type OrigemTokens = "stored" | "refresh" | "solver";
+export type OrigemTokens = "stored" | "solver";
 
 export type ResultadoAuth =
   | { ok: true; origem: OrigemTokens }
   | { ok: false; needsLogin: boolean; motivo: string };
 
 export interface OpcoesAuthManager {
-  gameUrl: string;
-  fetchJogo: HttpFetch;
   stored: TokenProvider;
   solver: TokenProvider;
   segredos: readonly (string | undefined)[];
@@ -157,12 +196,12 @@ const RESULTADO_PARADO: ResultadoAuth = {
 };
 const DESCRICAO_ORIGEM: Record<OrigemTokens, string> = {
   stored: "tokens salvos",
-  refresh: "refresh",
   solver: "solver",
 };
 
 export class AuthManager implements TokenProvider {
   private tokens: Tokens | null = null;
+  private nickAtual: string | null = null;
   private timer: NodeJS.Timeout | undefined;
   private fluxo: Promise<ResultadoAuth> | null = null;
   private parado = false;
@@ -180,6 +219,9 @@ export class AuthManager implements TokenProvider {
   }
 
   async invalidar(): Promise<Tokens> {
+    if (this.falhasTransitorias > 0) {
+      throw new AuthAdiadaError("renovação transitória já agendada; aguardando retry");
+    }
     const resultado = await this.unico(() => this.executarRenovacao());
     if (resultado.ok && this.tokens) return this.tokens;
     if (!resultado.ok && !resultado.needsLogin) throw new AuthAdiadaError(resultado.motivo);
@@ -191,8 +233,31 @@ export class AuthManager implements TokenProvider {
     if (this.tokens && this.precisaRenovar(this.tokens.accessToken)) {
       await this.unico(() => this.executarRenovacao());
     }
-    if (!this.tokens) throw new AuthIndisponivelError("sem tokens válidos (needs-login)");
+    if (!this.tokens) {
+      if (this.falhasTransitorias > 0) {
+        throw new AuthAdiadaError("autenticação adiada; nova tentativa agendada");
+      }
+      throw new AuthIndisponivelError("sem tokens válidos (needs-login)");
+    }
     return this.tokens;
+  }
+
+  nick(): string | null {
+    return this.nickAtual;
+  }
+
+  adotar(tokens: Tokens): void {
+    if (tokens.nick) this.nickAtual = tokens.nick;
+    this.tokens = tokens;
+    this.aceitoEm = Date.now();
+    this.falhasTransitorias = 0;
+    this.health.setTokens(tokens);
+    const exp = lerExpiracao(tokens.accessToken);
+    if (exp === null) {
+      this.desarmar();
+      return;
+    }
+    this.armar(Math.max(exp - MARGEM_REFRESH_MS - Date.now(), PISO_REFRESH_MS));
   }
 
   parar(): void {
@@ -214,31 +279,16 @@ export class AuthManager implements TokenProvider {
     const salvos = await this.tentar("tokens salvos", () => this.opcoes.stored.getTokens(), falhas);
     if (!salvos) return this.viaSolver(falhas);
     if (!this.expirado(salvos.accessToken)) return this.aceitar(salvos, "stored");
-    return this.renovarCom(salvos, falhas);
+    return this.viaSolver(falhas);
   }
 
   private executarRenovacao(): Promise<ResultadoAuth> {
     if (!this.tokens) return this.executarAutenticacao();
     this.health.setLastAction("renovando tokens");
-    return this.renovarCom(this.tokens, []);
+    return this.viaSolver([]);
   }
 
-  private async renovarCom(atuais: Tokens, falhas: string[]): Promise<ResultadoAuth> {
-    if (this.parado) return RESULTADO_PARADO;
-    let renovados: Tokens;
-    try {
-      renovados = await this.refresh(atuais.refreshToken);
-    } catch (erro) {
-      const motivo = this.descrever("refresh", erro);
-      if (erro instanceof RefreshIndisponivelError) return this.adiar(atuais, motivo);
-      falhas.push(motivo);
-      this.health.setState("authenticating");
-      return this.viaSolver(falhas);
-    }
-    return this.aceitar(renovados, "refresh");
-  }
-
-  private adiar(atuais: Tokens, motivo: string): ResultadoAuth {
+  private adiar(atuais: Tokens | null, motivo: string): ResultadoAuth {
     this.tokens = atuais;
     this.falhasTransitorias += 1;
     const atraso = Math.min(
@@ -253,20 +303,27 @@ export class AuthManager implements TokenProvider {
 
   private async viaSolver(falhas: string[]): Promise<ResultadoAuth> {
     if (this.parado) return RESULTADO_PARADO;
-    const doSolver = await this.tentar("solver", () => this.opcoes.solver.getTokens(), falhas);
-    if (doSolver) return this.aceitar(doSolver, "solver");
-    this.desarmar();
-    this.tokens = null;
-    this.falhasTransitorias = 0;
-    const motivo = `todas as estratégias de autenticação falharam: ${falhas.join("; ")}`;
-    this.health.setState("needs-login");
-    this.health.setLastError(motivo);
-    this.health.setLastAction("aguardando login manual");
-    return { ok: false, needsLogin: true, motivo };
+    let doSolver: Tokens;
+    try {
+      doSolver = await this.opcoes.solver.getTokens();
+    } catch (erro) {
+      const motivo = this.descrever("solver", erro);
+      if (ehTransitorio(erro)) return this.adiar(this.tokens, [...falhas, motivo].join("; "));
+      this.desarmar();
+      this.tokens = null;
+      this.falhasTransitorias = 0;
+      const texto = `autenticação falhou: ${[...falhas, motivo].join("; ")}`;
+      this.health.setState("needs-login");
+      this.health.setLastError(texto);
+      this.health.setLastAction("aguardando login manual");
+      return { ok: false, needsLogin: true, motivo: texto };
+    }
+    return this.aceitar(doSolver, "solver");
   }
 
   private aceitar(tokens: Tokens, origem: OrigemTokens): ResultadoAuth {
     this.tokens = tokens;
+    if (tokens.nick) this.nickAtual = tokens.nick;
     this.aceitoEm = Date.now();
     this.falhasTransitorias = 0;
     this.health.setTokens(tokens);
@@ -336,20 +393,11 @@ export class AuthManager implements TokenProvider {
     const segredos = [...this.opcoes.segredos, this.tokens?.accessToken, this.tokens?.refreshToken];
     return `${etapa}: ${ocultarSegredos(mensagem, segredos).slice(0, MAX_FALHA_CHARS)}`;
   }
-
-  private refresh(refreshToken: string): Promise<Tokens> {
-    return renovarTokens(refreshToken, {
-      gameUrl: this.opcoes.gameUrl,
-      fetch: this.opcoes.fetchJogo,
-    });
-  }
 }
 
 export function criarAuthManager(config: WorkerConfig, health: HealthState): AuthManager {
   const fetchJogo = criarFetch(config.proxyUrl);
   return new AuthManager(health, {
-    gameUrl: config.gameUrl,
-    fetchJogo,
     stored: new StoredTokenProvider(config),
     solver: new SolverTokenProvider(config, { fetchJogo, fetchSolver: criarFetch() }),
     segredos: [config.pokeidlePass, config.solverKey, config.accessToken, config.refreshToken],

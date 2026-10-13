@@ -1,11 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { HealthState } from "../health.js";
-import type { ClienteJogo, EstadoJogo, HuntMapa } from "./client.js";
+import type { ClienteJogo, EstadoJogo } from "./client.js";
 import {
   atrasoComJitter,
   criarAcoes,
   drenar,
-  escolherHuntPadrao,
   runGameLoop,
   type Acao,
   type GameLoop,
@@ -281,173 +280,95 @@ describe("drenar", () => {
 
 class ClienteFake implements ClienteJogo {
   conectado = true;
+  huntAlvo: string | null = "caterpie";
   readonly estado: EstadoJogo = {
     conectadoEm: Date.now(),
     huntAtual: null,
     huntDesde: null,
-    huntRetomavel: null,
-    huntCooldownAte: null,
-    enterHuntEnviadoEm: null,
+    huntSelectEnviadoEm: null,
     ultimoKillEm: null,
     ultimoKill: null,
     kills: 0,
     capturas: 0,
-    balls: null,
-    itensInventario: null,
-    ultimoAnalyzer: null,
-    restartFreeze: null,
-    restartResumeEnviadoEm: null,
   };
   readonly comandos: string[] = [];
-  hunts: HuntMapa[] = [];
-  readonly enterHunt = vi.fn((slug: string, resume: boolean) => {
-    this.comandos.push(`enter-hunt ${slug} resume=${resume}`);
-    this.estado.enterHuntEnviadoEm = Date.now();
+  readonly selecionarHunt = vi.fn((slug: string) => {
+    this.comandos.push(`hunt.select ${slug}`);
+    this.estado.huntSelectEnviadoEm = Date.now();
   });
-  readonly leaveHunt = vi.fn(() => {
-    this.comandos.push("leave-hunt");
-    this.estado.huntAtual = null;
-    this.estado.huntDesde = null;
-  });
-  readonly restartResume = vi.fn(() => {
-    this.comandos.push("restart-resume");
-    this.estado.restartResumeEnviadoEm = Date.now();
-  });
-  readonly reciclar = vi.fn(() => {
-    this.comandos.push("reciclar");
-    return true;
-  });
-  readonly buscarHunts = vi.fn(async () => this.hunts);
 }
 
-function acoesPorNome(huntSlug?: string): Record<string, Acao<ClienteJogo>> {
-  return Object.fromEntries(criarAcoes({ huntSlug, health }).map((a) => [a.nome, a]));
+function acoesPorNome(): Record<string, Acao<ClienteJogo>> {
+  return Object.fromEntries(criarAcoes({ health }).map((a) => [a.nome, a]));
 }
-
-describe("escolherHuntPadrao", () => {
-  it("ignora cidades e ginásios e pega a hunt de menor nível", () => {
-    expect(
-      escolherHuntPadrao([
-        { slug: "cerulean", nome: "Cerulean", nivel: 0 },
-        { slug: "goldenrod", nome: "Goldenrod", nivel: 5 },
-        { slug: "gym_brock", nome: "Brock", nivel: 1 },
-        { slug: "bulbasaur", nome: "Bulbasaur", nivel: 20 },
-        { slug: "caterpie", nome: "Caterpie", nivel: 1 },
-        { slug: "weedle", nome: "Weedle", nivel: 1 },
-      ]),
-    ).toBe("caterpie");
-  });
-
-  it("sem hunt utilizável devolve null", () => {
-    expect(escolherHuntPadrao([{ slug: "pewter", nome: "Lavender", nivel: 0 }])).toBeNull();
-  });
-});
 
 describe("ação garantir-hunt", () => {
   it("desconectado só aguarda", async () => {
     const c = new ClienteFake();
     c.conectado = false;
-    await expect(acoesPorNome("caterpie")["garantir-hunt"]!.executar(c)).resolves.toBe(
-      "aguardando conexão",
-    );
-    expect(c.enterHunt).not.toHaveBeenCalled();
+    await expect(acoesPorNome()["garantir-hunt"]!.executar(c)).resolves.toBe("aguardando conexão");
+    expect(c.selecionarHunt).not.toHaveBeenCalled();
   });
 
-  it("fora de hunt entra no HUNT_SLUG", async () => {
+  it("fora de hunt seleciona o huntAlvo resolvido", async () => {
     const c = new ClienteFake();
-    await expect(acoesPorNome("caterpie")["garantir-hunt"]!.executar(c)).resolves.toBe(
-      "enter-hunt caterpie",
-    );
-    expect(c.comandos).toEqual(["enter-hunt caterpie resume=false"]);
+    await expect(acoesPorNome()["garantir-hunt"]!.executar(c)).resolves.toBe("hunt.select caterpie");
+    expect(c.comandos).toEqual(["hunt.select caterpie"]);
   });
 
-  it("retoma a hunt anunciada pelo servidor com resume", async () => {
+  it("em hunt não envia nada", async () => {
     const c = new ClienteFake();
-    c.estado.huntRetomavel = "caterpie";
-    await acoesPorNome("caterpie")["garantir-hunt"]!.executar(c);
-    expect(c.comandos).toEqual(["enter-hunt caterpie resume=true"]);
+    c.estado.huntAtual = "caterpie";
+    await expect(acoesPorNome()["garantir-hunt"]!.executar(c)).resolves.toBe("em hunt caterpie");
+    expect(c.selecionarHunt).not.toHaveBeenCalled();
   });
 
-  it("em hunt, em cooldown ou com restart pendente não envia nada", async () => {
-    const garantir = acoesPorNome("caterpie")["garantir-hunt"]!;
-    const emHunt = new ClienteFake();
-    emHunt.estado.huntAtual = "caterpie";
-    await expect(garantir.executar(emHunt)).resolves.toBe("em hunt caterpie");
-
-    const emCooldown = new ClienteFake();
-    emCooldown.estado.huntCooldownAte = Date.now() + 5_000;
-    await expect(garantir.executar(emCooldown)).resolves.toBe("cooldown de hunt");
-
-    const congelado = new ClienteFake();
-    congelado.estado.restartFreeze = { frozenAt: 1, restartedAt: 2 };
-    await expect(garantir.executar(congelado)).resolves.toBe("aguardando restart-resume");
-
-    expect([emHunt, emCooldown, congelado].map((c) => c.enterHunt.mock.calls.length)).toEqual([
-      0, 0, 0,
-    ]);
+  it("sem huntAlvo fica idle", async () => {
+    const c = new ClienteFake();
+    c.huntAlvo = null;
+    await expect(acoesPorNome()["garantir-hunt"]!.executar(c)).resolves.toBe("idle: sem hunt alvo");
+    expect(c.selecionarHunt).not.toHaveBeenCalled();
+    expect(health.snapshot().lastError).toContain("sem hunt alvo");
   });
 
-  it("não reenvia enter-hunt antes de 10s sem field-init", async () => {
-    const garantir = acoesPorNome("caterpie")["garantir-hunt"]!;
+  it("não reenvia hunt.select antes de 10s sem campo.init", async () => {
+    const garantir = acoesPorNome()["garantir-hunt"]!;
     const c = new ClienteFake();
     await garantir.executar(c);
     vi.advanceTimersByTime(9_999);
-    await expect(garantir.executar(c)).resolves.toBe("aguardando field-init");
+    await expect(garantir.executar(c)).resolves.toBe("aguardando campo.init");
     vi.advanceTimersByTime(1);
     await garantir.executar(c);
-    expect(c.enterHunt).toHaveBeenCalledTimes(2);
+    expect(c.selecionarHunt).toHaveBeenCalledTimes(2);
   });
 
-  it("3 enter-hunt sem field-init avisam que a hunt foi ignorada; field-init zera", async () => {
-    const garantir = acoesPorNome("caterpie")["garantir-hunt"]!;
+  it("3 hunt.select sem campo.init avisam que a hunt foi ignorada; campo.init zera", async () => {
+    const garantir = acoesPorNome()["garantir-hunt"]!;
     const c = new ClienteFake();
     for (let tentativa = 1; tentativa <= 3; tentativa += 1) {
       expect(health.snapshot().lastError).toBeNull();
       await garantir.executar(c);
       vi.advanceTimersByTime(10_000);
     }
-    expect(c.enterHunt).toHaveBeenCalledTimes(3);
-    expect(health.snapshot().lastError).toBe("HUNT_SLUG inválido ou hunt ignorada: caterpie");
+    expect(c.selecionarHunt).toHaveBeenCalledTimes(3);
+    expect(health.snapshot().lastError).toBe("hunt inválida ou ignorada: caterpie");
 
     c.estado.huntAtual = "caterpie";
     await garantir.executar(c);
     c.estado.huntAtual = null;
+    c.estado.huntSelectEnviadoEm = null;
     health.setLastError(null);
     await garantir.executar(c);
     vi.advanceTimersByTime(10_000);
     await garantir.executar(c);
-    expect(c.enterHunt).toHaveBeenCalledTimes(5);
+    expect(c.selecionarHunt).toHaveBeenCalledTimes(5);
     expect(health.snapshot().lastError).toBeNull();
-  });
-
-  it("sem HUNT_SLUG usa map-markers uma vez e guarda a escolha", async () => {
-    const garantir = acoesPorNome()["garantir-hunt"]!;
-    const c = new ClienteFake();
-    c.hunts = [
-      { slug: "cerulean", nome: "Cerulean", nivel: 0 },
-      { slug: "rattata", nome: "Rattata", nivel: 1 },
-    ];
-    await expect(garantir.executar(c)).resolves.toBe("enter-hunt rattata");
-    c.estado.enterHuntEnviadoEm = null;
-    await garantir.executar(c);
-    expect(c.buscarHunts).toHaveBeenCalledTimes(1);
-    expect(c.enterHunt).toHaveBeenCalledTimes(2);
-  });
-
-  it("sem HUNT_SLUG e sem hunt no map-markers fica idle pedindo HUNT_SLUG", async () => {
-    const c = new ClienteFake();
-    c.hunts = [{ slug: "cerulean", nome: "Cerulean", nivel: 0 }];
-    await expect(acoesPorNome()["garantir-hunt"]!.executar(c)).resolves.toBe(
-      "idle: sem hunt configurada",
-    );
-    expect(c.enterHunt).not.toHaveBeenCalled();
-    expect(health.snapshot().lastError).toContain("HUNT_SLUG");
   });
 });
 
 describe("ação watchdog-stall", () => {
-  it("10 min sem field-kill com socket vivo → leave-hunt + enter-hunt", async () => {
-    const watchdog = acoesPorNome("caterpie")["watchdog-stall"]!;
+  it("10 min sem kill com socket vivo → hunt.select", async () => {
+    const watchdog = acoesPorNome()["watchdog-stall"]!;
     const c = new ClienteFake();
     c.estado.huntAtual = "caterpie";
     c.estado.huntDesde = Date.now();
@@ -458,12 +379,12 @@ describe("ação watchdog-stall", () => {
     expect(c.comandos).toEqual([]);
 
     vi.advanceTimersByTime(1);
-    await expect(watchdog.executar(c)).resolves.toBe("stall em caterpie: leave-hunt + enter-hunt");
-    expect(c.comandos).toEqual(["leave-hunt", "enter-hunt caterpie resume=false"]);
+    await expect(watchdog.executar(c)).resolves.toBe("stall em caterpie: hunt.select");
+    expect(c.comandos).toEqual(["hunt.select caterpie"]);
   });
 
   it("kill recente adia o watchdog; sem hunt ou desconectado não age", async () => {
-    const watchdog = acoesPorNome("caterpie")["watchdog-stall"]!;
+    const watchdog = acoesPorNome()["watchdog-stall"]!;
     const c = new ClienteFake();
     c.estado.huntAtual = "caterpie";
     c.estado.huntDesde = Date.now();
@@ -486,7 +407,7 @@ describe("ação watchdog-stall", () => {
   });
 
   it("após 3 recuperações sem kill avisa no lastError e espaça para 1h; kill zera", async () => {
-    const watchdog = acoesPorNome("caterpie")["watchdog-stall"]!;
+    const watchdog = acoesPorNome()["watchdog-stall"]!;
     const c = new ClienteFake();
     const entrarNaHunt = () => {
       c.estado.huntAtual = "caterpie";
@@ -498,74 +419,36 @@ describe("ação watchdog-stall", () => {
       await watchdog.executar(c);
       entrarNaHunt();
     }
-    expect(c.leaveHunt).toHaveBeenCalledTimes(3);
+    expect(c.selecionarHunt).toHaveBeenCalledTimes(3);
     expect(health.snapshot().lastError).toBe("hunt caterpie sem kills há 30min");
 
     vi.advanceTimersByTime(60 * 60_000 - 1);
     await expect(watchdog.executar(c)).resolves.toBe("hunt caterpie ativa");
     vi.advanceTimersByTime(1);
     await watchdog.executar(c);
-    expect(c.leaveHunt).toHaveBeenCalledTimes(4);
+    expect(c.selecionarHunt).toHaveBeenCalledTimes(4);
     entrarNaHunt();
 
     vi.advanceTimersByTime(60_000);
     c.estado.ultimoKillEm = Date.now();
     vi.advanceTimersByTime(10 * 60_000);
     await watchdog.executar(c);
-    expect(c.leaveHunt).toHaveBeenCalledTimes(5);
+    expect(c.selecionarHunt).toHaveBeenCalledTimes(5);
   });
 
-  it("dentro do runGameLoop o stall dispara leave+enter", async () => {
+  it("dentro do runGameLoop o stall dispara hunt.select", async () => {
     const c = new ClienteFake();
     c.estado.huntAtual = "caterpie";
     c.estado.huntDesde = Date.now();
-    loop = runGameLoop(c, criarAcoes({ huntSlug: "caterpie", health }), {
+    loop = runGameLoop(c, criarAcoes({ health }), {
       minDelayMs: 30_000,
       maxDelayMs: 30_000,
       health,
     });
-    await vi.advanceTimersByTimeAsync(10 * 60_000);
-    expect(c.leaveHunt).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(3 * 30_000);
-    expect(c.leaveHunt).toHaveBeenCalledTimes(1);
-    expect(c.comandos.slice(0, 2)).toEqual(["leave-hunt", "enter-hunt caterpie resume=false"]);
-  });
-});
-
-describe("ação restart-freeze", () => {
-  it("restart-freeze → restart-resume uma vez; sem restart-resumed em 8s recicla a conexão", async () => {
-    const restart = acoesPorNome("caterpie")["restart-freeze"]!;
-    const c = new ClienteFake();
-    await expect(restart.executar(c)).resolves.toBe("sem restart pendente");
-
-    c.estado.restartFreeze = { frozenAt: 1, restartedAt: 2 };
-    await expect(restart.executar(c)).resolves.toBe("restart-resume enviado");
-    vi.advanceTimersByTime(7_999);
-    await expect(restart.executar(c)).resolves.toBe("aguardando restart-resumed");
-    vi.advanceTimersByTime(1);
-    await expect(restart.executar(c)).resolves.toBe("restart-resumed não chegou; reconectando");
-    expect(c.comandos).toEqual(["restart-resume", "reciclar"]);
-  });
-
-  it("reciclagem suspensa pelo cliente vira resultado explícito", async () => {
-    const restart = acoesPorNome("caterpie")["restart-freeze"]!;
-    const c = new ClienteFake();
-    c.reciclar.mockReturnValueOnce(false);
-    c.estado.restartFreeze = { frozenAt: 1, restartedAt: 2 };
-    c.estado.restartResumeEnviadoEm = Date.now() - 8_000;
-    await expect(restart.executar(c)).resolves.toBe("reciclagem suspensa (limite de reconexões)");
-  });
-
-  it("dentro do runGameLoop o freeze é respondido no ciclo seguinte", async () => {
-    const c = new ClienteFake();
-    c.estado.huntAtual = "caterpie";
-    loop = runGameLoop(c, criarAcoes({ huntSlug: "caterpie", health }), {
-      minDelayMs: 1_000,
-      maxDelayMs: 1_000,
-      health,
-    });
-    c.estado.restartFreeze = { frozenAt: 1, restartedAt: 2 };
-    await vi.advanceTimersByTimeAsync(3_000);
-    expect(c.restartResume).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(9 * 60_000);
+    expect(c.selecionarHunt).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(c.selecionarHunt).toHaveBeenCalledTimes(1);
+    expect(c.comandos.slice(0, 1)).toEqual(["hunt.select caterpie"]);
   });
 });

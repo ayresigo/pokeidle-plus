@@ -5,6 +5,7 @@ export interface ValoresConta {
   pokeidleUser: string;
   pokeidlePass: string;
   proxyUrl: string;
+  huntSlug: string;
   solverKey: string;
   accessToken: string;
   refreshToken: string;
@@ -19,6 +20,7 @@ export const LIMITES: Record<CampoConta, number> = {
   pokeidleUser: 128,
   pokeidlePass: 256,
   proxyUrl: 512,
+  huntSlug: 64,
   solverKey: 2048,
   accessToken: 2048,
   refreshToken: 2048,
@@ -31,6 +33,7 @@ export const VALORES_VAZIOS: ValoresConta = {
   pokeidleUser: "",
   pokeidlePass: "",
   proxyUrl: "",
+  huntSlug: "",
   solverKey: "",
   accessToken: "",
   refreshToken: "",
@@ -80,6 +83,7 @@ export function corpoCriacao(valores: ValoresConta): AccountInput {
     pokeidleUser: valores.pokeidleUser.trim(),
     pokeidlePass: valores.pokeidlePass,
     ...(proxy !== "" && { proxyUrl: proxy }),
+    ...(valores.huntSlug.trim() !== "" && { huntSlug: valores.huntSlug.trim() }),
     ...(solverKey !== "" && { solverKey }),
     ...(accessToken !== "" && refreshToken !== "" && { accessToken, refreshToken }),
   };
@@ -94,6 +98,7 @@ export function corpoEdicao(valores: ValoresConta, atual: Account): AccountPatch
     ...(label !== atual.label && { label }),
     ...(pokeidleUser !== atual.pokeidleUser && { pokeidleUser }),
     ...(proxy !== "" && proxy !== atual.proxyUrl && { proxyUrl: proxy }),
+    ...(valores.huntSlug.trim() !== (atual.huntSlug ?? "") && { huntSlug: valores.huntSlug.trim() }),
     ...(valores.pokeidlePass !== "" && { pokeidlePass: valores.pokeidlePass }),
     ...(solverKey !== "" && { solverKey }),
   };
@@ -107,30 +112,42 @@ export function tokensPreenchidos(valores: ValoresConta): Tokens | null {
 
 export type ResultadoTokens = { ok: true; tokens: Tokens } | { ok: false; erro: string };
 
-const ASPAS_EXTERNAS = /^(['`])([\s\S]*)\1$/;
+const ASPAS_CONSOLE = /^(['`])([\s\S]*)\1$/;
+const ASPAS_TOKEN = /^(['"`])([\s\S]*)\1$/;
 
-export function extrairTokens(texto: string): ResultadoTokens {
-  let atual: unknown = texto.trim();
-  if (atual === "") return { ok: false, erro: "cole o conteúdo de pokeweb:tokens" };
+function tentarObjetoTokens(texto: string): Record<string, unknown> | null {
+  let atual: unknown = texto;
   for (let tentativa = 0; tentativa < 3 && typeof atual === "string"; tentativa++) {
-    const bruto: string = atual.trim();
-    const semAspas = ASPAS_EXTERNAS.exec(bruto);
-    const candidato = semAspas ? semAspas[2] : bruto;
+    const bruto = atual.trim();
+    const m = ASPAS_CONSOLE.exec(bruto);
+    const candidato = m ? m[2].trim() : bruto;
     try {
       atual = JSON.parse(candidato);
     } catch {
-      return { ok: false, erro: "não é um JSON válido; copie o texto inteiro retornado pelo console" };
+      return null;
     }
   }
-  if (atual === null || typeof atual !== "object") {
-    return { ok: false, erro: "o JSON deve ser um objeto com accessToken e refreshToken" };
+  return atual !== null && typeof atual === "object" && !Array.isArray(atual)
+    ? (atual as Record<string, unknown>)
+    : null;
+}
+
+export function extrairTokens(texto: string): ResultadoTokens {
+  const inicial = texto.trim();
+  if (inicial === "") return { ok: false, erro: "cole o token do pokeidle.io" };
+  const objeto = tentarObjetoTokens(inicial);
+  if (objeto) {
+    const { accessToken, refreshToken } = objeto;
+    if (typeof accessToken !== "string" || accessToken.trim() === "") {
+      return { ok: false, erro: "accessToken ausente no JSON colado" };
+    }
+    if (typeof refreshToken !== "string" || refreshToken.trim() === "") {
+      return { ok: false, erro: "refreshToken ausente no JSON colado" };
+    }
+    return { ok: true, tokens: { accessToken: accessToken.trim(), refreshToken: refreshToken.trim() } };
   }
-  const { accessToken, refreshToken } = atual as Record<string, unknown>;
-  if (typeof accessToken !== "string" || accessToken.trim() === "") {
-    return { ok: false, erro: "accessToken ausente no JSON" };
-  }
-  if (typeof refreshToken !== "string" || refreshToken.trim() === "") {
-    return { ok: false, erro: "refreshToken ausente no JSON" };
-  }
-  return { ok: true, tokens: { accessToken: accessToken.trim(), refreshToken: refreshToken.trim() } };
+  const semAspas = ASPAS_TOKEN.exec(inicial);
+  const token = (semAspas ? semAspas[2] : inicial).trim();
+  if (token === "") return { ok: false, erro: "cole o token do pokeidle.io" };
+  return { ok: true, tokens: { accessToken: token, refreshToken: token } };
 }

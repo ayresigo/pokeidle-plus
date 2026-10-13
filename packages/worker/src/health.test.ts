@@ -23,6 +23,8 @@ describe("HealthState", () => {
       lastAction: null,
       lastError: null,
       uptimeSec: 0,
+      kills: 0,
+      capturas: 0,
     });
   });
 
@@ -65,6 +67,15 @@ describe("HealthState", () => {
     estado.setTokens({ accessToken: "a", refreshToken: "r" });
     expect(estado.snapshot().tokens).toEqual({ accessToken: "a", refreshToken: "r" });
   });
+
+  it("expõe e atualiza kills e capturas com setContadores (valores absolutos)", () => {
+    const estado = new HealthState(null, () => 0);
+    expect(estado.snapshot()).toMatchObject({ kills: 0, capturas: 0 });
+    estado.setContadores({ kills: 3, capturas: 1 });
+    expect(estado.snapshot()).toMatchObject({ kills: 3, capturas: 1 });
+    estado.setContadores({ kills: 5, capturas: 2 });
+    expect(estado.snapshot()).toMatchObject({ kills: 5, capturas: 2 });
+  });
 });
 
 describe("startHealthServer", () => {
@@ -81,6 +92,8 @@ describe("startHealthServer", () => {
       lastAction: "conectando",
       lastError: null,
       uptimeSec: expect.any(Number),
+      kills: 0,
+      capturas: 0,
     });
     expect(corpo).not.toHaveProperty("tokens");
   });

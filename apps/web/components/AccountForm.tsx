@@ -130,7 +130,7 @@ export function AccountForm({ editar = false }: AccountFormProps) {
         setWorker(snapshot.find((w) => w.accountId === accountId) ?? null);
         setErroCarga(conta ? null : "conta não encontrada");
         if (conta) {
-          setValores({ ...VALORES_VAZIOS, label: conta.label, pokeidleUser: conta.pokeidleUser, proxyUrl: conta.proxyUrl ?? "" });
+          setValores({ ...VALORES_VAZIOS, label: conta.label, pokeidleUser: conta.pokeidleUser, proxyUrl: conta.proxyUrl ?? "", huntSlug: conta.huntSlug ?? "" });
         }
         setCarregando(false);
       },
@@ -231,7 +231,7 @@ export function AccountForm({ editar = false }: AccountFormProps) {
         setJsonTokens("");
         setOferecerRestart(estaRodando(worker));
       }
-      setValores({ ...VALORES_VAZIOS, label: conta.label, pokeidleUser: conta.pokeidleUser, proxyUrl: conta.proxyUrl ?? "" });
+      setValores({ ...VALORES_VAZIOS, label: conta.label, pokeidleUser: conta.pokeidleUser, proxyUrl: conta.proxyUrl ?? "", huntSlug: conta.huntSlug ?? "" });
       setAviso({ tipo: "ok", texto: tokens ? "alterações e tokens salvos" : "alterações salvas" });
     } catch (erro) {
       setAviso({ tipo: "erro", texto: mensagem(erro) });
@@ -309,21 +309,19 @@ export function AccountForm({ editar = false }: AccountFormProps) {
       <ol className="list-decimal space-y-1 pl-5 text-sm text-slate-700">
         <li>
           No seu navegador normal, entre em{" "}
-          <a href="https://poke.idleworld.online" target="_blank" rel="noreferrer" className="underline">
-            poke.idleworld.online
+          <a href="https://pokeidle.io" target="_blank" rel="noreferrer" className="underline">
+            pokeidle.io
           </a>{" "}
           com esta conta.
         </li>
-        <li>Com o jogo aberto, aperte F12 e vá na aba Console.</li>
-        <li>
-          Digite <code className="rounded bg-slate-100 px-1">sessionStorage.getItem(&apos;pokeweb:tokens&apos;)</code> e aperte Enter.
-        </li>
-        <li>Copie o texto inteiro que aparecer e cole no campo abaixo; os dois tokens são preenchidos sozinhos.</li>
+        <li>Com o jogo aberto, aperte F12 e vá na aba Application (ou Armazenamento) → Local Storage → pokeidle.io.</li>
+        <li>Copie o valor do token Bearer guardado ali (o texto longo do token de sessão).</li>
+        <li>Cole esse token único no campo abaixo; os campos accessToken e refreshToken são preenchidos sozinhos.</li>
         <li>Não use mais essa conta naquele navegador: o jogo permite só uma sessão por conta.</li>
       </ol>
       <div className="flex flex-col gap-1 text-sm">
         <label htmlFor="campo-json-tokens" className="font-medium">
-          JSON de pokeweb:tokens
+          Token do pokeidle.io
         </label>
         <textarea
           id="campo-json-tokens"
@@ -331,11 +329,11 @@ export function AccountForm({ editar = false }: AccountFormProps) {
           onChange={colarJson}
           rows={3}
           spellCheck={false}
-          placeholder='{"accessToken":"…","refreshToken":"…"}'
+          placeholder="cole aqui o token do pokeidle.io"
           className={`rounded border px-3 py-2 font-mono text-xs ${erroJson ? "border-red-400" : "border-slate-300"}`}
         />
         {erroJson && <p className="text-xs text-red-700">{erroJson}</p>}
-        {!erroJson && jsonTokens.trim() !== "" && <p className="text-xs text-green-700">tokens extraídos do JSON</p>}
+        {!erroJson && jsonTokens.trim() !== "" && <p className="text-xs text-green-700">token aplicado</p>}
       </div>
       <Campo campo="accessToken" rotulo="accessToken" valores={valores} erros={erros} onChange={alterar} placeholder={placeholderSegredo} />
       <Campo campo="refreshToken" rotulo="refreshToken" valores={valores} erros={erros} onChange={alterar} placeholder={placeholderSegredo} />
@@ -421,6 +419,15 @@ export function AccountForm({ editar = false }: AccountFormProps) {
               onChange={alterar}
               placeholder={placeholderSegredo}
               dica="chave 2captcha-compatível para login automático"
+            />
+            <Campo
+              campo="huntSlug"
+              rotulo="Hunt (slug) (opcional)"
+              valores={valores}
+              erros={erros}
+              onChange={alterar}
+              placeholder="deixe vazio para o worker usar a hunt atual do personagem"
+              dica="slug da hunt a caçar (ex.: bellsprout); vazio = mantém a hunt do servidor"
             />
           </div>
           {!precisaLogin && secaoTokens}

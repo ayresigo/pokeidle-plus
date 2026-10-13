@@ -1,5 +1,5 @@
 import type { HealthState } from "../health.js";
-import type { ClienteJogo, HuntMapa } from "./client.js";
+import type { ClienteJogo } from "./client.js";
 
 export interface Acao<C> {
   nome: string;
@@ -23,18 +23,8 @@ const MAX_ERROS_CONSECUTIVOS = 5;
 const STALL_MS = 10 * 60_000;
 const STALL_ESPACADO_MS = 60 * 60_000;
 const MAX_RECUPERACOES_RAPIDAS = 3;
-const PRAZO_FIELD_INIT_MS = 10_000;
-const MAX_ENTRADAS_SEM_FIELD_INIT = 3;
-const PRAZO_RESTART_RESUMED_MS = 8_000;
-const CIDADES: Record<string, true> = {
-  cerulean: true,
-  pewter: true,
-  viridian: true,
-  cassino: true,
-  arena_pvp: true,
-  goldenrod: true,
-  shopping: true,
-};
+const PRAZO_CAMPO_INIT_MS = 10_000;
+const MAX_ENTRADAS_SEM_CAMPO_INIT = 3;
 
 export function atrasoComJitter(
   minMs: number,
@@ -44,77 +34,42 @@ export function atrasoComJitter(
   return minMs + Math.floor(random() * (maxMs - minMs + 1));
 }
 
-export function escolherHuntPadrao(hunts: readonly HuntMapa[]): string | null {
-  let escolhida: HuntMapa | null = null;
-  for (const hunt of hunts) {
-    if (hunt.nivel <= 0 || CIDADES[hunt.slug] === true || hunt.slug.startsWith("gym_")) continue;
-    if (!escolhida || hunt.nivel < escolhida.nivel) escolhida = hunt;
-  }
-  return escolhida?.slug ?? null;
-}
-
 export interface OpcoesAcoes {
-  huntSlug: string | undefined;
   health: HealthState;
 }
 
 export function criarAcoes(opcoes: OpcoesAcoes): Acao<ClienteJogo>[] {
-  let slugAlvo = opcoes.huntSlug ?? null;
-  let entradasSemFieldInit = 0;
+  let entradasSemCampoInit = 0;
   let recuperacoes = 0;
   let ultimaRecuperacaoEm = 0;
   let semKillDesde = 0;
-
-  const restartFreeze: Acao<ClienteJogo> = {
-    nome: "restart-freeze",
-    async executar(client) {
-      const { restartFreeze: freeze, restartResumeEnviadoEm: enviadoEm } = client.estado;
-      if (!client.conectado || !freeze) return "sem restart pendente";
-      if (enviadoEm === null) {
-        client.restartResume();
-        return "restart-resume enviado";
-      }
-      if (Date.now() - enviadoEm < PRAZO_RESTART_RESUMED_MS) return "aguardando restart-resumed";
-      return client.reciclar()
-        ? "restart-resumed não chegou; reconectando"
-        : "reciclagem suspensa (limite de reconexões)";
-    },
-  };
 
   const garantirHunt: Acao<ClienteJogo> = {
     nome: "garantir-hunt",
     async executar(client) {
       const estado = client.estado;
       if (!client.conectado) return "aguardando conexão";
-      if (estado.restartFreeze) return "aguardando restart-resume";
       if (estado.huntAtual) {
-        entradasSemFieldInit = 0;
+        entradasSemCampoInit = 0;
         return `em hunt ${estado.huntAtual}`;
       }
+      if (!client.huntAlvo) {
+        opcoes.health.setLastError("sem hunt alvo (aguardando welcome)");
+        return "idle: sem hunt alvo";
+      }
       const agora = Date.now();
-      if (estado.huntCooldownAte !== null && agora < estado.huntCooldownAte) {
-        entradasSemFieldInit = 0;
-        return "cooldown de hunt";
-      }
       if (
-        estado.enterHuntEnviadoEm !== null &&
-        agora - estado.enterHuntEnviadoEm < PRAZO_FIELD_INIT_MS
+        estado.huntSelectEnviadoEm !== null &&
+        agora - estado.huntSelectEnviadoEm < PRAZO_CAMPO_INIT_MS
       ) {
-        return "aguardando field-init";
+        return "aguardando campo.init";
       }
-      slugAlvo ??= escolherHuntPadrao(await client.buscarHunts());
-      if (!slugAlvo) {
-        opcoes.health.setLastError(
-          "HUNT_SLUG ausente e /api/game/map-markers sem hunt utilizável; defina HUNT_SLUG",
-        );
-        return "idle: sem hunt configurada";
+      client.selecionarHunt(client.huntAlvo);
+      entradasSemCampoInit += 1;
+      if (entradasSemCampoInit >= MAX_ENTRADAS_SEM_CAMPO_INIT) {
+        opcoes.health.setLastError(`hunt inválida ou ignorada: ${client.huntAlvo}`);
       }
-      client.enterHunt(slugAlvo, estado.huntRetomavel === slugAlvo);
-      entradasSemFieldInit += 1;
-      if (entradasSemFieldInit >= MAX_ENTRADAS_SEM_FIELD_INIT) {
-        opcoes.health.setLastError(`HUNT_SLUG inválido ou hunt ignorada: ${slugAlvo}`);
-      }
-      return `enter-hunt ${slugAlvo}`;
+      return `hunt.select ${client.huntAlvo}`;
     },
   };
 
@@ -125,23 +80,27 @@ export function criarAcoes(opcoes: OpcoesAcoes): Acao<ClienteJogo>[] {
       if (!client.conectado || !huntAtual) return "sem hunt ativa";
       if (ultimoKillEm !== null && ultimoKillEm > ultimaRecuperacaoEm) recuperacoes = 0;
       const agora = Date.now();
-      const referencia = Math.max(ultimoKillEm ?? 0, huntDesde ?? 0, conectadoEm ?? 0);
+      const referencia = Math.max(
+        ultimoKillEm ?? 0,
+        huntDesde ?? 0,
+        conectadoEm ?? 0,
+        ultimaRecuperacaoEm,
+      );
       const limiar = recuperacoes >= MAX_RECUPERACOES_RAPIDAS ? STALL_ESPACADO_MS : STALL_MS;
       if (agora - referencia < limiar) return `hunt ${huntAtual} ativa`;
       if (recuperacoes === 0) semKillDesde = referencia;
       recuperacoes += 1;
       ultimaRecuperacaoEm = agora;
-      client.leaveHunt();
-      client.enterHunt(huntAtual, false);
+      client.selecionarHunt(huntAtual);
       if (recuperacoes >= MAX_RECUPERACOES_RAPIDAS) {
         const minutos = Math.round((agora - semKillDesde) / 60_000);
         opcoes.health.setLastError(`hunt ${huntAtual} sem kills há ${minutos}min`);
       }
-      return `stall em ${huntAtual}: leave-hunt + enter-hunt`;
+      return `stall em ${huntAtual}: hunt.select`;
     },
   };
 
-  return [restartFreeze, garantirHunt, watchdogStall];
+  return [garantirHunt, watchdogStall];
 }
 
 export function runGameLoop<C>(client: C, acoes: readonly Acao<C>[], opcoes: OpcoesLoop): GameLoop {

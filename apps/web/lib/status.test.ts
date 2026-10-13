@@ -3,7 +3,7 @@ import type { Account, EstadoJogo, WorkerSnapshot } from "./api";
 import { badgeDoStatus, erroDoWorker, estaRodando, formatarUptime, mesclarContas } from "./status";
 
 function conta(id: string): Account {
-  return { id, label: `conta ${id}`, pokeidleUser: `user-${id}`, proxyUrl: null, createdAt: "2026-10-01T00:00:00.000Z" };
+  return { id, label: `conta ${id}`, pokeidleUser: `user-${id}`, proxyUrl: null, huntSlug: null, createdAt: "2026-10-01T00:00:00.000Z" };
 }
 
 function worker(accountId: string, extra: Partial<WorkerSnapshot> = {}): WorkerSnapshot {

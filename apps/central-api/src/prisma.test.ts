@@ -47,6 +47,7 @@ describe("prisma + postgres dev", () => {
     });
     expect(account.accessTokenEnc).toBeNull();
     expect(account.proxyUrl).toBeNull();
+    expect(account.huntSlug).toBeNull();
 
     const release = await prisma.release.create({
       data: {

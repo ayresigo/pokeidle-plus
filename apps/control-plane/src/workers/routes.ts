@@ -20,6 +20,7 @@ interface CredenciaisConta {
   refreshToken: string | null;
   solverKey: string | null;
   proxyUrl: string | null;
+  huntSlug: string | null;
 }
 
 class ErroCredenciais extends Error {}
@@ -76,6 +77,7 @@ export function registerWorkerRoutes(app: FastifyInstance, deps: WorkersDeps): v
     if (credenciais.refreshToken !== null) env.REFRESH_TOKEN = credenciais.refreshToken;
     if (credenciais.solverKey !== null) env.SOLVER_KEY = credenciais.solverKey;
     if (credenciais.proxyUrl !== null) env.PROXY_URL = credenciais.proxyUrl;
+    if (credenciais.huntSlug) env.HUNT_SLUG = credenciais.huntSlug;
     return env;
   }
 

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export interface WorkerConfig {
   accountId: string;
   gameUrl: string;
@@ -12,8 +14,8 @@ export interface WorkerConfig {
   solverApiUrl: string;
   turnstileSitekey: string | undefined;
   gameWsUrl: string;
-  gameWsShards: number;
   huntSlug: string | undefined;
+  dispositivo: string;
 }
 
 export type WorkerEnv = Record<string, string | undefined>;
@@ -29,8 +31,7 @@ const WS_PROTOCOLS: Record<string, true> = {
   "wss:": true,
 };
 const WS_SCHEME: Record<string, string> = { "http:": "ws:", "https:": "wss:" };
-const DEFAULT_WS_PATH = "/ws";
-const DEFAULT_WS_SHARDS = 88;
+const NAMESPACE_DISPOSITIVO = "b9a2e1c4-7d3f-4e5a-9c21-0f6d8a1b2c3d";
 
 export class ConfigError extends Error {
   readonly problems: readonly string[];
@@ -62,9 +63,19 @@ function parsePort(value: string): number | null {
   return port >= 1 && port <= 65535 ? port : null;
 }
 
-function resolverWsUrl(base: string, path: string): string {
-  const url = new URL(path, base);
+function dispositivoDeConta(accountId: string): string {
+  const ns = Buffer.from(NAMESPACE_DISPOSITIVO.replaceAll("-", ""), "hex");
+  const bytes = createHash("sha1").update(ns).update(accountId).digest().subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const h = bytes.toString("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+}
+
+function resolverWsUrl(base: string, path: string | undefined): string {
+  const url = new URL(base);
   url.protocol = WS_SCHEME[url.protocol] ?? url.protocol;
+  if (path !== undefined) url.pathname = path;
   return url.toString();
 }
 
@@ -85,9 +96,9 @@ export function loadConfig(env: WorkerEnv): WorkerConfig {
   const solverApiUrl = read(env, "SOLVER_API_URL")?.replace(/\/+$/, "") ?? DEFAULT_SOLVER_API_URL;
   const turnstileSitekey = read(env, "TURNSTILE_SITEKEY");
   const gameWsUrlRaw = read(env, "GAME_WS_URL");
-  const gameWsPath = read(env, "GAME_WS_PATH") ?? DEFAULT_WS_PATH;
-  const gameWsShardsRaw = read(env, "GAME_WS_SHARDS");
+  const gameWsPath = read(env, "GAME_WS_PATH");
   const huntSlug = read(env, "HUNT_SLUG");
+  const dispositivoEnv = read(env, "DISPOSITIVO");
 
   if (!accountId) problems.push("ACCOUNT_ID ausente");
   if (!gameUrl) problems.push("GAME_URL ausente");
@@ -99,15 +110,8 @@ export function loadConfig(env: WorkerEnv): WorkerConfig {
     problems.push("GAME_WS_URL inválida (esperado URL ws://, wss://, http:// ou https://)");
   }
 
-  if (!gameWsPath.startsWith("/")) {
+  if (gameWsPath !== undefined && !gameWsPath.startsWith("/")) {
     problems.push("GAME_WS_PATH inválido (esperado path começando com /)");
-  }
-
-  let gameWsShards = DEFAULT_WS_SHARDS;
-  if (gameWsShardsRaw) {
-    const shards = /^\d+$/.test(gameWsShardsRaw) ? Number(gameWsShardsRaw) : 0;
-    if (shards < 1) problems.push("GAME_WS_SHARDS inválido (esperado inteiro >= 1)");
-    else gameWsShards = shards;
   }
 
   if (solverKey) {
@@ -156,7 +160,7 @@ export function loadConfig(env: WorkerEnv): WorkerConfig {
     solverApiUrl,
     turnstileSitekey,
     gameWsUrl: resolverWsUrl(gameWsUrlRaw ?? gameUrl, gameWsPath),
-    gameWsShards,
     huntSlug,
+    dispositivo: dispositivoEnv ?? dispositivoDeConta(accountId),
   };
 }

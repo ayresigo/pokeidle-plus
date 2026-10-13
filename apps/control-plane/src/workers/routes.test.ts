@@ -27,6 +27,7 @@ interface CredenciaisFake {
   refreshToken: string | null;
   solverKey: string | null;
   proxyUrl: string | null;
+  huntSlug: string | null;
 }
 
 const CREDENCIAIS_COMPLETAS: CredenciaisFake = {
@@ -36,6 +37,7 @@ const CREDENCIAIS_COMPLETAS: CredenciaisFake = {
   refreshToken: "token-jogo-r",
   solverKey: "chave-solver-x",
   proxyUrl: "http://proxy:8080",
+  huntSlug: "e2e-hunt",
 };
 
 interface OrchestratorFake extends ContainerOrchestrator {
@@ -192,6 +194,7 @@ describe("rotas de workers", () => {
         REFRESH_TOKEN: "token-jogo-r",
         SOLVER_KEY: "chave-solver-x",
         PROXY_URL: "http://proxy:8080",
+        HUNT_SLUG: "e2e-hunt",
         CONTROL_PLANE_URL: "http://cp.test:4000",
       });
       expect(orchestrator.startWorker).toHaveBeenCalledWith("container-1");
@@ -214,6 +217,7 @@ describe("rotas de workers", () => {
           refreshToken: null,
           solverKey: null,
           proxyUrl: null,
+          huntSlug: null,
         },
       });
 
@@ -232,6 +236,7 @@ describe("rotas de workers", () => {
       expect(env).not.toHaveProperty("REFRESH_TOKEN");
       expect(env).not.toHaveProperty("SOLVER_KEY");
       expect(env).not.toHaveProperty("PROXY_URL");
+      expect(env).not.toHaveProperty("HUNT_SLUG");
     });
 
     it("não expõe credenciais nem env na resposta HTTP", async () => {

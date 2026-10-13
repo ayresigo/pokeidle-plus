@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { WorkerConfig } from "../config.js";
 import { HealthState, type Tokens } from "../health.js";
@@ -8,14 +7,13 @@ import {
   AuthAdiadaError,
   AuthIndisponivelError,
   AuthManager,
+  ehTransitorio,
   LoginError,
   SolverTokenProvider,
   StoredTokenProvider,
   type TokenProvider,
 } from "./provider.js";
-
-const htmlLogin = readFileSync(new URL("./__fixtures__/login.html", import.meta.url), "utf8");
-const chunkLogin = readFileSync(new URL("./__fixtures__/login-chunk.txt", import.meta.url), "utf8");
+import { SolverError } from "./solver.js";
 
 const agoraSeg = () => Math.floor(Date.now() / 1000);
 const gameUrl = "https://jogo.example";
@@ -36,8 +34,8 @@ const configBase: WorkerConfig = {
   solverApiUrl: "https://api.2captcha.com",
   turnstileSitekey: undefined,
   gameWsUrl: "wss://jogo.example/ws",
-  gameWsShards: 88,
   huntSlug: undefined,
+  dispositivo: "dispositivo-fixo-123",
 };
 
 let gerente: AuthManager | null = null;
@@ -86,11 +84,9 @@ function jogo(rotas: Record<string, () => Response>): Mock<HttpFetch> {
 
 function criarGerente(
   health: HealthState,
-  opcoes: { stored: TokenProvider; solver: TokenProvider; fetchJogo?: HttpFetch },
+  opcoes: { stored: TokenProvider; solver: TokenProvider },
 ): AuthManager {
   gerente = new AuthManager(health, {
-    gameUrl,
-    fetchJogo: opcoes.fetchJogo ?? jogo({}),
     stored: opcoes.stored,
     solver: opcoes.solver,
     segredos: [senha, solverKey],
@@ -111,11 +107,17 @@ describe("StoredTokenProvider", () => {
 });
 
 describe("SolverTokenProvider", () => {
-  it("resolve o captcha e faz login com identifier, password e captchaToken", async () => {
+  it("resolve o captcha e faz login no /auth/entrar com id, senha, turnstileToken e dispositivo", async () => {
     const fetchSolver = solverFeliz();
     const fetchJogo = jogo({
-      "https://jogo.example/api/auth/login": () =>
-        respostaJson({ accessToken: "access-login", refreshToken: "refresh-login" }),
+      "https://jogo.example/auth/entrar": () =>
+        respostaJson({
+          nick: "Ash",
+          token: "token-opaco-login",
+          provedor: "local",
+          precisaNick: false,
+          termosVersao: "2024-01",
+        }),
     });
     const provider = new SolverTokenProvider(
       { ...configBase, turnstileSitekey: "0x4AAAAAAAoverride12345" },
@@ -123,35 +125,39 @@ describe("SolverTokenProvider", () => {
     );
 
     await expect(provider.getTokens()).resolves.toEqual({
-      accessToken: "access-login",
-      refreshToken: "refresh-login",
+      accessToken: "token-opaco-login",
+      refreshToken: "token-opaco-login",
+      nick: "Ash",
     });
 
     expect(fetchJogo).toHaveBeenCalledTimes(1);
-    expect(fetchJogo).toHaveBeenCalledWith("https://jogo.example/api/auth/login", {
+    expect(fetchJogo).toHaveBeenCalledWith("https://jogo.example/auth/entrar", {
       method: "POST",
       headers: { "content-type": "application/json", "user-agent": "UA/1.0" },
-      body: JSON.stringify({ identifier: "treinador", password: senha, captchaToken: "token-captcha" }),
+      body: JSON.stringify({
+        id: "treinador",
+        senha,
+        turnstileToken: "token-captcha",
+        dispositivo: "dispositivo-fixo-123",
+      }),
     });
     expect(JSON.parse(String(fetchSolver.mock.calls[0]?.[1]?.body))).toEqual({
       clientKey: solverKey,
       task: {
         type: "TurnstileTaskProxyless",
-        websiteURL: "https://jogo.example/login",
+        websiteURL: "https://jogo.example/app",
         websiteKey: "0x4AAAAAAAoverride12345",
       },
     });
   });
 
-  it("descobre a sitekey pelo HTML e chunks quando não há override", async () => {
+  it("busca a sitekey em /auth/provedores quando não há override", async () => {
     const fetchSolver = solverFeliz();
-    const fetchJogo = vi.fn<HttpFetch>(async (url) => {
-      if (url === "https://jogo.example/login") return new Response(htmlLogin);
-      if (url.endsWith("/3aqjofv7-1o3x.js")) return new Response(chunkLogin);
-      if (url === "https://jogo.example/api/auth/login") {
-        return respostaJson({ accessToken: "a", refreshToken: "r" });
-      }
-      return new Response("");
+    const fetchJogo = jogo({
+      "https://jogo.example/auth/provedores": () =>
+        respostaJson({ google: true, discord: true, turnstile: "0x4AAAAAAEccJgXg19_AZoDr" }),
+      "https://jogo.example/auth/entrar": () =>
+        respostaJson({ token: "token-opaco", precisaNick: false }),
     });
     const provider = new SolverTokenProvider(configBase, {
       fetchJogo,
@@ -162,17 +168,17 @@ describe("SolverTokenProvider", () => {
     await provider.getTokens();
 
     expect(JSON.parse(String(fetchSolver.mock.calls[0]?.[1]?.body)).task.websiteKey).toBe(
-      "0x4AAAAAADkKBnFEMDt0MGBM",
+      "0x4AAAAAAEccJgXg19_AZoDr",
     );
   });
 
-  it("recusa conta com 2FA", async () => {
+  it("recusa conta sem personagem (precisaNick)", async () => {
     const provider = new SolverTokenProvider(
       { ...configBase, turnstileSitekey: "0x4AAAAAAAoverride12345" },
       {
         fetchJogo: jogo({
-          "https://jogo.example/api/auth/login": () =>
-            respostaJson({ twoFactor: true, twoFactorToken: "tf" }),
+          "https://jogo.example/auth/entrar": () =>
+            respostaJson({ token: "token-opaco", precisaNick: true }),
         }),
         fetchSolver: solverFeliz(),
         sleep: async () => {},
@@ -182,16 +188,16 @@ describe("SolverTokenProvider", () => {
     const erro = await erroDe(provider.getTokens());
 
     expect(erro).toBeInstanceOf(LoginError);
-    expect(erro.message).toContain("2FA");
+    expect(erro.message).toContain("precisaNick");
   });
 
-  it("login recusado traz a mensagem do jogo sem segredos", async () => {
+  it("login recusado traz o erro do jogo sem segredos", async () => {
     const provider = new SolverTokenProvider(
       { ...configBase, turnstileSitekey: "0x4AAAAAAAoverride12345" },
       {
         fetchJogo: jogo({
-          "https://jogo.example/api/auth/login": () =>
-            respostaJson({ message: `Credenciais inválidas: ${senha} / token-captcha` }, 400),
+          "https://jogo.example/auth/entrar": () =>
+            respostaJson({ erro: `login.turnstileFalhou ${senha} / token-captcha` }, 400),
         }),
         fetchSolver: solverFeliz(),
         sleep: async () => {},
@@ -201,7 +207,7 @@ describe("SolverTokenProvider", () => {
     const erro = await erroDe(provider.getTokens());
 
     expect(erro).toBeInstanceOf(LoginError);
-    expect(erro.message).toContain("Credenciais inválidas");
+    expect(erro.message).toContain("login.turnstileFalhou");
     expect(erro.message).toContain("HTTP 400");
     expect(erro.message).not.toContain(senha);
     expect(erro.message).not.toContain("token-captcha");
@@ -220,95 +226,53 @@ describe("SolverTokenProvider", () => {
 });
 
 describe("AuthManager", () => {
-  it("usa os tokens salvos válidos sem refresh nem solver", async () => {
-    const salvos = { accessToken: criarJwt(agoraSeg() + 3600), refreshToken: "refresh-salvo" };
-    const health = new HealthState(salvos);
-    const stored = provedor(salvos);
-    const solver = provedor({ accessToken: "x", refreshToken: "y" });
-    const fetchJogo = jogo({});
+  const opaco = { accessToken: "token-opaco", refreshToken: "token-opaco" };
 
-    const resultado = await criarGerente(health, { stored, solver, fetchJogo }).autenticar();
+  it("usa os tokens salvos válidos sem acionar o solver", async () => {
+    const health = new HealthState(opaco);
+    const stored = provedor(opaco);
+    const solver = provedor({ accessToken: "x", refreshToken: "y" });
+
+    const resultado = await criarGerente(health, { stored, solver }).autenticar();
 
     expect(resultado).toEqual({ ok: true, origem: "stored" });
     expect(solver.getTokens).not.toHaveBeenCalled();
-    expect(fetchJogo).not.toHaveBeenCalled();
     expect(health.snapshot().state).toBe("authenticating");
     expect(health.snapshot().tokens).toBeUndefined();
-    await expect(gerente?.getTokens()).resolves.toEqual(salvos);
+    await expect(gerente?.getTokens()).resolves.toEqual(opaco);
   });
 
-  it("renova pelo refresh quando o access salvo expirou e publica no health", async () => {
-    const salvos = { accessToken: criarJwt(agoraSeg() - 10), refreshToken: "refresh-salvo" };
-    const novos = { accessToken: criarJwt(agoraSeg() + 3600), refreshToken: "refresh-novo" };
-    const health = new HealthState(salvos);
-    const solver = provedor({ accessToken: "x", refreshToken: "y" });
-    const fetchJogo = jogo({ "https://jogo.example/api/auth/refresh": () => respostaJson(novos) });
+  it("sem tokens salvos autentica via solver e publica autenticado via solver", async () => {
+    const doSolver = { accessToken: "token-solver", refreshToken: "token-solver" };
+    const health = new HealthState(null);
+    const solver = provedor(doSolver);
 
     const resultado = await criarGerente(health, {
-      stored: provedor(salvos),
+      stored: provedor(new AuthIndisponivelError("ACCESS_TOKEN/REFRESH_TOKEN não configurados")),
       solver,
-      fetchJogo,
     }).autenticar();
 
-    expect(resultado).toEqual({ ok: true, origem: "refresh" });
-    expect(JSON.parse(String(fetchJogo.mock.calls[0]?.[1]?.body))).toEqual({
-      refreshToken: "refresh-salvo",
-    });
-    expect(solver.getTokens).not.toHaveBeenCalled();
-    expect(health.snapshot().tokens).toEqual(novos);
-    await expect(gerente?.getTokens()).resolves.toEqual(novos);
+    expect(resultado).toEqual({ ok: true, origem: "solver" });
+    expect(health.snapshot().tokens).toEqual(doSolver);
+    expect(health.snapshot().lastAction).toBe("autenticado via solver");
+    expect(health.snapshot().lastError).toBeNull();
   });
 
-  it("refresh 401 cai para o solver", async () => {
-    const salvos = { accessToken: criarJwt(agoraSeg() - 10), refreshToken: "refresh-morto" };
-    const doSolver = { accessToken: criarJwt(agoraSeg() + 3600), refreshToken: "refresh-solver" };
+  it("token salvo expirado sem refresh cai para o solver", async () => {
+    const salvos = { accessToken: criarJwt(agoraSeg() - 10), refreshToken: "refresh-expirado" };
+    const doSolver = { accessToken: "token-solver", refreshToken: "token-solver" };
     const health = new HealthState(salvos);
     const solver = provedor(doSolver);
 
     const resultado = await criarGerente(health, {
       stored: provedor(salvos),
       solver,
-      fetchJogo: jogo({
-        "https://jogo.example/api/auth/refresh": () => respostaJson({ message: "expired" }, 401),
-      }),
     }).autenticar();
 
     expect(resultado).toEqual({ ok: true, origem: "solver" });
     expect(solver.getTokens).toHaveBeenCalledTimes(1);
     expect(health.snapshot().tokens).toEqual(doSolver);
     expect(health.snapshot().lastError).toBeNull();
-  });
-
-  it("sem tokens salvos vai direto ao solver", async () => {
-    const doSolver = { accessToken: criarJwt(agoraSeg() + 3600), refreshToken: "refresh-solver" };
-    const health = new HealthState(null);
-    const fetchJogo = jogo({});
-
-    const resultado = await criarGerente(health, {
-      stored: provedor(new AuthIndisponivelError("ACCESS_TOKEN/REFRESH_TOKEN não configurados")),
-      solver: provedor(doSolver),
-      fetchJogo,
-    }).autenticar();
-
-    expect(resultado).toEqual({ ok: true, origem: "solver" });
-    expect(fetchJogo).not.toHaveBeenCalled();
-    expect(health.snapshot().tokens).toEqual(doSolver);
-  });
-
-  it("fica em authenticating enquanto as estratégias rodam", async () => {
-    const health = new HealthState(null);
-    const pendente = Promise.withResolvers<Tokens>();
-    const solver = { getTokens: vi.fn(() => pendente.promise) };
-
-    const promessa = criarGerente(health, {
-      stored: provedor(new AuthIndisponivelError("sem tokens")),
-      solver,
-    }).autenticar();
-    await vi.waitFor(() => expect(solver.getTokens).toHaveBeenCalled());
-
-    expect(health.snapshot().state).toBe("authenticating");
-    pendente.resolve({ accessToken: "a", refreshToken: "r" });
-    await expect(promessa).resolves.toEqual({ ok: true, origem: "solver" });
   });
 
   it("todas as estratégias falhando vira needs-login com erro descritivo", async () => {
@@ -327,295 +291,54 @@ describe("AuthManager", () => {
     expect(await erroDe(gerente!.getTokens())).toBeInstanceOf(AuthIndisponivelError);
   });
 
-  it("agenda o refresh 60s antes do exp e reagenda com os tokens novos", async () => {
-    vi.useFakeTimers();
-    const salvos = { accessToken: criarJwt(agoraSeg() + 600), refreshToken: "refresh-1" };
-    const segundo = { accessToken: criarJwt(agoraSeg() + 1200), refreshToken: "refresh-2" };
-    const terceiro = { accessToken: criarJwt(agoraSeg() + 1800), refreshToken: "refresh-3" };
-    const respostas = [segundo, terceiro];
-    const fetchJogo = jogo({
-      "https://jogo.example/api/auth/refresh": () => respostaJson(respostas.shift()),
-    });
-    const health = new HealthState(salvos);
-
-    await criarGerente(health, {
-      stored: provedor(salvos),
-      solver: provedor(new AuthIndisponivelError("sem solver")),
-      fetchJogo,
-    }).autenticar();
-
-    await vi.advanceTimersByTimeAsync(539_000);
-    expect(fetchJogo).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(fetchJogo).toHaveBeenCalledTimes(1);
-    expect(health.snapshot().tokens).toEqual(segundo);
-
-    await vi.advanceTimersByTimeAsync(599_000);
-    expect(fetchJogo).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(fetchJogo).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(String(fetchJogo.mock.calls[1]?.[1]?.body))).toEqual({
-      refreshToken: "refresh-2",
-    });
-    expect(health.snapshot().tokens).toEqual(terceiro);
-  });
-
-  it("refresh agendado recusado sem solver vira needs-login", async () => {
-    vi.useFakeTimers();
-    const salvos = { accessToken: criarJwt(agoraSeg() + 600), refreshToken: "refresh-1" };
-    const health = new HealthState(salvos);
-
-    await criarGerente(health, {
-      stored: provedor(salvos),
-      solver: provedor(new AuthIndisponivelError("SOLVER_KEY não configurada")),
-      fetchJogo: jogo({
-        "https://jogo.example/api/auth/refresh": () => respostaJson({}, 401),
-      }),
-    }).autenticar();
-    health.setState("in-game");
-
-    await vi.advanceTimersByTimeAsync(540_000);
-
-    expect(health.snapshot().state).toBe("needs-login");
-    expect(health.snapshot().lastError).toContain("401");
-  });
-
-  it("getTokens renova uma única vez quando o access venceu", async () => {
-    vi.useFakeTimers();
-    const salvos = { accessToken: criarJwt(agoraSeg() + 600), refreshToken: "refresh-1" };
-    const novos = { accessToken: criarJwt(agoraSeg() + 3600), refreshToken: "refresh-2" };
-    const fetchJogo = jogo({ "https://jogo.example/api/auth/refresh": () => respostaJson(novos) });
-    const manager = criarGerente(new HealthState(salvos), {
-      stored: provedor(salvos),
-      solver: provedor(new AuthIndisponivelError("sem solver")),
-      fetchJogo,
-    });
-    await manager.autenticar();
-    vi.setSystemTime(Date.now() + 600_000);
-
-    const [a, b] = await Promise.all([manager.getTokens(), manager.getTokens()]);
-
-    expect(a).toEqual(novos);
-    expect(b).toEqual(novos);
-    expect(fetchJogo).toHaveBeenCalledTimes(1);
-  });
-
-  it("nenhum segredo aparece no health nem nas mensagens de erro", async () => {
-    const salvos = { accessToken: criarJwt(agoraSeg() - 10), refreshToken: "refresh-segredo-789" };
+  it("fica em authenticating enquanto o solver roda", async () => {
     const health = new HealthState(null);
-    const fetchJogo = jogo({
-      "https://jogo.example/api/auth/refresh": () =>
-        respostaJson({ message: `refresh ${salvos.refreshToken} morto` }, 401),
-      "https://jogo.example/api/auth/login": () =>
-        respostaJson({ message: `senha ${senha} errada, chave ${solverKey}` }, 401),
-    });
-    const fetchSolver = vi
-      .fn<HttpFetch>()
-      .mockResolvedValueOnce(respostaJson({ errorId: 0, taskId: 1 }))
-      .mockResolvedValueOnce(
-        respostaJson({ errorId: 0, status: "ready", solution: { token: "captcha-segredo" } }),
-      );
-    const config = {
-      ...configBase,
-      accessToken: salvos.accessToken,
-      refreshToken: salvos.refreshToken,
-      turnstileSitekey: "0x4AAAAAAAoverride12345",
-    };
+    const pendente = Promise.withResolvers<Tokens>();
+    const solver = { getTokens: vi.fn(() => pendente.promise) };
 
-    const resultado = await criarGerente(health, {
-      stored: new StoredTokenProvider(config),
-      solver: new SolverTokenProvider(config, { fetchJogo, fetchSolver, sleep: async () => {} }),
-      fetchJogo,
-    }).autenticar();
-
-    const textos = [
-      JSON.stringify(health.snapshot()),
-      resultado.ok ? "" : resultado.motivo,
-      (await erroDe(gerente!.getTokens())).message,
-    ];
-    expect(health.snapshot().state).toBe("needs-login");
-    expect(health.snapshot().lastError).toContain("401");
-    for (const texto of textos) {
-      for (const segredo of [senha, solverKey, salvos.refreshToken, salvos.accessToken, "captcha-segredo"]) {
-        expect(texto).not.toContain(segredo);
-      }
-    }
-  });
-
-  it("redige segredos antes de truncar mensagens longas do jogo", async () => {
-    const health = new HealthState(null);
-    const config = { ...configBase, turnstileSitekey: "0x4AAAAAAAoverride12345" };
-    const fetchJogo = jogo({
-      "https://jogo.example/api/auth/login": () =>
-        respostaJson({ message: `${"x".repeat(180)} ${solverKey} ${"y".repeat(400)}` }, 400),
-    });
-
-    await criarGerente(health, {
-      stored: new StoredTokenProvider(config),
-      solver: new SolverTokenProvider(config, {
-        fetchJogo,
-        fetchSolver: solverFeliz(),
-        sleep: async () => {},
-      }),
-      fetchJogo,
-    }).autenticar();
-
-    const lastError = health.snapshot().lastError ?? "";
-    expect(lastError).toContain("HTTP 400");
-    expect(lastError).not.toContain(solverKey.slice(0, 8));
-    expect(lastError.length).toBeLessThan(800);
-  });
-
-  it("access renovado com validade curta não martela o refresh", async () => {
-    vi.useFakeTimers();
-    const salvos = { accessToken: criarJwt(agoraSeg() + 600), refreshToken: "refresh-1" };
-    const fetchJogo = jogo({
-      "https://jogo.example/api/auth/refresh": () =>
-        respostaJson({ accessToken: criarJwt(agoraSeg() + 30), refreshToken: "refresh-curto" }),
-    });
-    const health = new HealthState(salvos);
-    const manager = criarGerente(health, {
-      stored: provedor(salvos),
-      solver: provedor(new AuthIndisponivelError("sem solver")),
-      fetchJogo,
-    });
-    await manager.autenticar();
-
-    await vi.advanceTimersByTimeAsync(540_000);
-    expect(fetchJogo).toHaveBeenCalledTimes(1);
-    expect(health.snapshot().lastError).toContain("validade curta");
-
-    await vi.advanceTimersByTimeAsync(100);
-    await manager.getTokens();
-    expect(fetchJogo).toHaveBeenCalledTimes(1);
-
-    await vi.advanceTimersByTimeAsync(29_900);
-    expect(fetchJogo).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(fetchJogo).toHaveBeenCalledTimes(4);
-  });
-
-  it("refresh agendado com falha transitória mantém tokens e reagenda com backoff", async () => {
-    vi.useFakeTimers();
-    const inicio = Date.now();
-    const salvos = { accessToken: criarJwt(agoraSeg() + 600), refreshToken: "refresh-1" };
-    const novos = { accessToken: criarJwt(agoraSeg() + 7200), refreshToken: "refresh-2" };
-    const fetchJogo = jogo({
-      "https://jogo.example/api/auth/refresh": () =>
-        Date.now() - inicio < 1_140_000 ? respostaJson({}, 503) : respostaJson(novos),
-    });
-    const health = new HealthState(salvos);
-    const estados = vi.spyOn(health, "setState");
-    const solver = provedor({ accessToken: "x", refreshToken: "y" });
-    const manager = criarGerente(health, { stored: provedor(salvos), solver, fetchJogo });
-    await manager.autenticar();
-
-    await vi.advanceTimersByTimeAsync(560_000);
-    expect(health.snapshot().lastError).toContain("nova tentativa em 30s");
-    expect(await manager.getTokens()).toEqual(salvos);
-
-    await vi.advanceTimersByTimeAsync(840_000);
-
-    expect(solver.getTokens).not.toHaveBeenCalled();
-    expect(estados).not.toHaveBeenCalledWith("needs-login");
-    expect(health.snapshot().tokens).toEqual(novos);
-    expect(health.snapshot().lastError).toBeNull();
-    await expect(manager.getTokens()).resolves.toEqual(novos);
-  });
-
-  it("autenticar com refresh transitório não gasta solver e agenda nova tentativa", async () => {
-    vi.useFakeTimers();
-    const salvos = { accessToken: criarJwt(agoraSeg() - 10), refreshToken: "refresh-1" };
-    const novos = { accessToken: criarJwt(agoraSeg() + 3600), refreshToken: "refresh-2" };
-    const respostas = [503, 503, 503, 503];
-    const fetchJogo = jogo({
-      "https://jogo.example/api/auth/refresh": () => {
-        const status = respostas.shift();
-        return status ? respostaJson({}, status) : respostaJson(novos);
-      },
-    });
-    const health = new HealthState(salvos);
-    const solver = provedor({ accessToken: "x", refreshToken: "y" });
-
-    const promessa = criarGerente(health, { stored: provedor(salvos), solver, fetchJogo }).autenticar();
-    await vi.advanceTimersByTimeAsync(7_000);
-    const resultado = await promessa;
-
-    expect(resultado).toMatchObject({ ok: false, needsLogin: false });
-    expect(health.snapshot().state).toBe("authenticating");
-    expect(solver.getTokens).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(health.snapshot().tokens).toEqual(novos);
-    expect(solver.getTokens).not.toHaveBeenCalled();
-  });
-
-  it("invalidar força refresh de token opaco uma única vez", async () => {
-    const salvos = { accessToken: "token-opaco", refreshToken: "refresh-1" };
-    const novos = { accessToken: "token-opaco-2", refreshToken: "refresh-2" };
-    const fetchJogo = jogo({ "https://jogo.example/api/auth/refresh": () => respostaJson(novos) });
-    const manager = criarGerente(new HealthState(salvos), {
-      stored: provedor(salvos),
-      solver: provedor(new AuthIndisponivelError("sem solver")),
-      fetchJogo,
-    });
-    await manager.autenticar();
-    expect(fetchJogo).not.toHaveBeenCalled();
-
-    const [a, b] = await Promise.all([manager.invalidar(), manager.invalidar()]);
-
-    expect(a).toEqual(novos);
-    expect(b).toEqual(novos);
-    expect(fetchJogo).toHaveBeenCalledTimes(1);
-  });
-
-  it("invalidar com refresh recusado segue para o solver", async () => {
-    const salvos = { accessToken: "token-opaco", refreshToken: "refresh-morto" };
-    const doSolver = { accessToken: "token-solver", refreshToken: "refresh-solver" };
-    const solver = provedor(doSolver);
-    const manager = criarGerente(new HealthState(salvos), {
-      stored: provedor(salvos),
+    const promessa = criarGerente(health, {
+      stored: provedor(new AuthIndisponivelError("sem tokens")),
       solver,
-      fetchJogo: jogo({
-        "https://jogo.example/api/auth/refresh": () => respostaJson({}, 401),
-      }),
-    });
+    }).autenticar();
+    await vi.waitFor(() => expect(solver.getTokens).toHaveBeenCalled());
+
+    expect(health.snapshot().state).toBe("authenticating");
+    pendente.resolve({ accessToken: "a", refreshToken: "r" });
+    await expect(promessa).resolves.toEqual({ ok: true, origem: "solver" });
+  });
+
+  it("invalidar re-loga pelo solver quando o token é rejeitado", async () => {
+    const doSolver = { accessToken: "token-novo", refreshToken: "token-novo" };
+    const solver = provedor(doSolver);
+    const health = new HealthState(opaco);
+    const manager = criarGerente(health, { stored: provedor(opaco), solver });
     await manager.autenticar();
+    expect(solver.getTokens).not.toHaveBeenCalled();
 
     await expect(manager.invalidar()).resolves.toEqual(doSolver);
     expect(solver.getTokens).toHaveBeenCalledTimes(1);
+    expect(health.snapshot().tokens).toEqual(doSolver);
+    expect(health.snapshot().lastAction).toBe("autenticado via solver");
   });
 
-  it("invalidar com refresh transitório lança AuthAdiadaError e mantém os tokens", async () => {
-    vi.useFakeTimers();
-    const salvos = { accessToken: "token-opaco", refreshToken: "refresh-1" };
-    const solver = provedor({ accessToken: "x", refreshToken: "y" });
-    const health = new HealthState(salvos);
-    const manager = criarGerente(health, {
-      stored: provedor(salvos),
-      solver,
-      fetchJogo: jogo({ "https://jogo.example/api/auth/refresh": () => respostaJson({}, 503) }),
-    });
+  it("invalidar compartilha o fluxo e re-loga uma única vez", async () => {
+    const doSolver = { accessToken: "token-novo", refreshToken: "token-novo" };
+    const solver = provedor(doSolver);
+    const manager = criarGerente(new HealthState(opaco), { stored: provedor(opaco), solver });
     await manager.autenticar();
 
-    const invalidacao = erroDe(manager.invalidar());
-    await vi.advanceTimersByTimeAsync(7_000);
-    const erro = await invalidacao;
+    const [a, b] = await Promise.all([manager.invalidar(), manager.invalidar()]);
 
-    expect(erro).toBeInstanceOf(AuthAdiadaError);
-    expect(erro).not.toBeInstanceOf(AuthIndisponivelError);
-    expect(solver.getTokens).not.toHaveBeenCalled();
-    expect(health.snapshot().state).not.toBe("needs-login");
-    await expect(manager.getTokens()).resolves.toEqual(salvos);
+    expect(a).toEqual(doSolver);
+    expect(b).toEqual(doSolver);
+    expect(solver.getTokens).toHaveBeenCalledTimes(1);
   });
 
-  it("invalidar com refresh recusado e sem solver lança AuthIndisponivelError", async () => {
-    const salvos = { accessToken: "token-opaco", refreshToken: "refresh-morto" };
-    const health = new HealthState(salvos);
+  it("invalidar sem solver disponível lança AuthIndisponivelError e vira needs-login", async () => {
+    const health = new HealthState(opaco);
     const manager = criarGerente(health, {
-      stored: provedor(salvos),
+      stored: provedor(opaco),
       solver: provedor(new AuthIndisponivelError("sem solver")),
-      fetchJogo: jogo({ "https://jogo.example/api/auth/refresh": () => respostaJson({}, 401) }),
     });
     await manager.autenticar();
 
@@ -625,9 +348,8 @@ describe("AuthManager", () => {
   });
 
   it("autenticar concorrente compartilha o mesmo fluxo", async () => {
-    const salvos = { accessToken: criarJwt(agoraSeg() + 3600), refreshToken: "refresh-1" };
-    const stored = provedor(salvos);
-    const manager = criarGerente(new HealthState(salvos), {
+    const stored = provedor(opaco);
+    const manager = criarGerente(new HealthState(opaco), {
       stored,
       solver: provedor(new AuthIndisponivelError("sem solver")),
     });
@@ -637,27 +359,248 @@ describe("AuthManager", () => {
     expect(stored.getTokens).toHaveBeenCalledTimes(1);
   });
 
-  it("parar durante refresh em voo não deixa timer pendente", async () => {
-    vi.useFakeTimers();
-    const salvos = { accessToken: criarJwt(agoraSeg() + 600), refreshToken: "refresh-1" };
-    const pendente = Promise.withResolvers<Response>();
-    const fetchJogo = vi.fn<HttpFetch>(() => pendente.promise);
-    const manager = criarGerente(new HealthState(salvos), {
-      stored: provedor(salvos),
-      solver: provedor(new AuthIndisponivelError("sem solver")),
-      fetchJogo,
+  it("nenhum segredo aparece no health nem nas mensagens de erro", async () => {
+    const health = new HealthState(null);
+    const config = { ...configBase, turnstileSitekey: "0x4AAAAAAAoverride12345" };
+    const fetchJogo = jogo({
+      "https://jogo.example/auth/entrar": () =>
+        respostaJson({ erro: `senha ${senha} errada, chave ${solverKey}` }, 401),
     });
-    await manager.autenticar();
-    expect(vi.getTimerCount()).toBe(1);
+    const fetchSolver = vi
+      .fn<HttpFetch>()
+      .mockResolvedValueOnce(respostaJson({ errorId: 0, taskId: 1 }))
+      .mockResolvedValueOnce(
+        respostaJson({ errorId: 0, status: "ready", solution: { token: "captcha-segredo" } }),
+      );
 
-    const invalidacao = manager.invalidar();
-    await vi.waitFor(() => expect(fetchJogo).toHaveBeenCalled());
-    manager.parar();
-    pendente.resolve(
-      respostaJson({ accessToken: criarJwt(agoraSeg() + 3600), refreshToken: "refresh-2" }),
+    const resultado = await criarGerente(health, {
+      stored: new StoredTokenProvider(config),
+      solver: new SolverTokenProvider(config, { fetchJogo, fetchSolver, sleep: async () => {} }),
+    }).autenticar();
+
+    const textos = [
+      JSON.stringify(health.snapshot()),
+      resultado.ok ? "" : resultado.motivo,
+      (await erroDe(gerente!.getTokens())).message,
+    ];
+    expect(health.snapshot().state).toBe("needs-login");
+    expect(health.snapshot().lastError).toContain("HTTP 401");
+    for (const texto of textos) {
+      for (const segredo of [senha, solverKey, "captcha-segredo"]) {
+        expect(texto).not.toContain(segredo);
+      }
+    }
+  });
+
+  it("redige segredos antes de truncar mensagens longas do jogo", async () => {
+    const health = new HealthState(null);
+    const config = { ...configBase, turnstileSitekey: "0x4AAAAAAAoverride12345" };
+    const fetchJogo = jogo({
+      "https://jogo.example/auth/entrar": () =>
+        respostaJson({ erro: `${"x".repeat(180)} ${solverKey} ${"y".repeat(400)}` }, 400),
+    });
+
+    await criarGerente(health, {
+      stored: new StoredTokenProvider(config),
+      solver: new SolverTokenProvider(config, {
+        fetchJogo,
+        fetchSolver: solverFeliz(),
+        sleep: async () => {},
+      }),
+    }).autenticar();
+
+    const lastError = health.snapshot().lastError ?? "";
+    expect(lastError).toContain("HTTP 400");
+    expect(lastError).not.toContain(solverKey.slice(0, 8));
+    expect(lastError.length).toBeLessThan(800);
+  });
+});
+
+describe("AuthManager — transitório vs definitivo (I3/I4)", () => {
+  const opaco = { accessToken: "tok-opaco", refreshToken: "tok-opaco" };
+
+  it("falha transitória do solver não vira needs-login; agenda retry", async () => {
+    vi.useFakeTimers();
+    try {
+      const solver = {
+        getTokens: vi.fn<() => Promise<Tokens>>().mockRejectedValue(
+          new SolverError("falha de rede", true),
+        ),
+      };
+      const health = new HealthState(null);
+      const manager = criarGerente(health, {
+        stored: provedor(new AuthIndisponivelError("sem tokens")),
+        solver,
+      });
+      const r = await manager.autenticar();
+      expect(r).toMatchObject({ ok: false, needsLogin: false });
+      expect(health.snapshot().state).not.toBe("needs-login");
+      expect(await erroDe(manager.getTokens())).toBeInstanceOf(AuthAdiadaError);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(solver.getTokens.mock.calls.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("falha definitiva do solver vira needs-login", async () => {
+    const solver = {
+      getTokens: vi.fn<() => Promise<Tokens>>().mockRejectedValue(
+        new SolverError("credencial inválida", false),
+      ),
+    };
+    const health = new HealthState(null);
+    const r = await criarGerente(health, {
+      stored: provedor(new AuthIndisponivelError("sem")),
+      solver,
+    }).autenticar();
+    expect(r).toMatchObject({ ok: false, needsLogin: true });
+    expect(health.snapshot().state).toBe("needs-login");
+  });
+
+  it("login.turnstileFalhou (HTTP 400) é transitório via SolverTokenProvider", async () => {
+    const provider = new SolverTokenProvider(
+      { ...configBase, turnstileSitekey: "0x4AAAAAAAoverride12345" },
+      {
+        fetchJogo: jogo({
+          "https://jogo.example/auth/entrar": () => respostaJson({ erro: "login.turnstileFalhou" }, 400),
+        }),
+        fetchSolver: solverFeliz(),
+        sleep: async () => {},
+      },
     );
-    await invalidacao;
+    const erro = await erroDe(provider.getTokens());
+    expect(erro).toBeInstanceOf(LoginError);
+    expect(ehTransitorio(erro)).toBe(true);
+  });
 
-    expect(vi.getTimerCount()).toBe(0);
+  it("login.credenciaisInvalidas (HTTP 401) é definitivo", async () => {
+    const provider = new SolverTokenProvider(
+      { ...configBase, turnstileSitekey: "0x4AAAAAAAoverride12345" },
+      {
+        fetchJogo: jogo({
+          "https://jogo.example/auth/entrar": () =>
+            respostaJson({ erro: "login.credenciaisInvalidas" }, 401),
+        }),
+        fetchSolver: solverFeliz(),
+        sleep: async () => {},
+      },
+    );
+    expect(ehTransitorio(await erroDe(provider.getTokens()))).toBe(false);
+  });
+
+  it("solver classifica errorCode: NO_SLOT/UNSOLVABLE transitório; ZERO_BALANCE/KEY definitivo", async () => {
+    const comCodigo = (errorCode: string) =>
+      new SolverTokenProvider(
+        { ...configBase, turnstileSitekey: "0x4AAAAAAAoverride12345" },
+        {
+          fetchJogo: jogo({}),
+          fetchSolver: vi.fn<HttpFetch>(async () => respostaJson({ errorId: 1, errorCode })),
+          sleep: async () => {},
+        },
+      );
+    expect(ehTransitorio(await erroDe(comCodigo("ERROR_NO_SLOT_AVAILABLE").getTokens()))).toBe(true);
+    expect(ehTransitorio(await erroDe(comCodigo("ERROR_CAPTCHA_UNSOLVABLE").getTokens()))).toBe(true);
+    expect(ehTransitorio(await erroDe(comCodigo("ERROR_ZERO_BALANCE").getTokens()))).toBe(false);
+    expect(ehTransitorio(await erroDe(comCodigo("ERROR_KEY_DOES_NOT_EXIST").getTokens()))).toBe(false);
+  });
+
+  it("solver que nunca fica ready (timeout) é transitório", async () => {
+    const provider = new SolverTokenProvider(
+      { ...configBase, turnstileSitekey: "0x4AAAAAAAoverride12345" },
+      {
+        fetchJogo: jogo({}),
+        fetchSolver: vi.fn<HttpFetch>(async (url) =>
+          String(url).endsWith("/createTask")
+            ? respostaJson({ errorId: 0, taskId: 1 })
+            : respostaJson({ errorId: 0, status: "processing" }),
+        ),
+        sleep: async () => {},
+      },
+    );
+    const erro = await erroDe(provider.getTokens());
+    expect(erro).toBeInstanceOf(SolverError);
+    expect(ehTransitorio(erro)).toBe(true);
+  });
+
+  it("status inesperado do solver (nem processing nem ready) é transitório", async () => {
+    const provider = new SolverTokenProvider(
+      { ...configBase, turnstileSitekey: "0x4AAAAAAAoverride12345" },
+      {
+        fetchJogo: jogo({}),
+        fetchSolver: vi.fn<HttpFetch>(async (url) =>
+          String(url).endsWith("/createTask")
+            ? respostaJson({ errorId: 0, taskId: 1 })
+            : respostaJson({ errorId: 0, status: "falhou" }),
+        ),
+        sleep: async () => {},
+      },
+    );
+    const erro = await erroDe(provider.getTokens());
+    expect(erro).toBeInstanceOf(SolverError);
+    expect(ehTransitorio(erro)).toBe(true);
+  });
+
+  it("agenda renovação antes do exp e re-loga pelo solver, reagendando", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    try {
+      const stored = provedor({ accessToken: criarJwt(120), refreshToken: "r" });
+      const solver = provedor({ accessToken: criarJwt(240), refreshToken: "r2" });
+      const manager = criarGerente(new HealthState(null), { stored, solver });
+      expect(await manager.autenticar()).toEqual({ ok: true, origem: "stored" });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(solver.getTokens).toHaveBeenCalledTimes(1);
+      await expect(manager.getTokens()).resolves.toMatchObject({ refreshToken: "r2" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("parar() durante renovação em voo não reagenda timer", async () => {
+    vi.useFakeTimers();
+    try {
+      const pend = Promise.withResolvers<Tokens>();
+      const solver = { getTokens: vi.fn<() => Promise<Tokens>>(() => pend.promise) };
+      const manager = criarGerente(new HealthState(opaco), { stored: provedor(opaco), solver });
+      await manager.autenticar();
+      const p = manager.invalidar().catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(0);
+      manager.parar();
+      pend.resolve({ accessToken: criarJwt(120), refreshToken: "r" });
+      await p;
+      solver.getTokens.mockClear();
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(solver.getTokens).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("adotar atualiza os tokens e publica no health (write-back) + nick", () => {
+    const health = new HealthState({ accessToken: "a0", refreshToken: "r0" });
+    const manager = criarGerente(health, { stored: provedor(opaco), solver: provedor(opaco) });
+    manager.adotar({ accessToken: "a1", refreshToken: "a1", nick: "Zé" });
+    expect(health.snapshot().tokens).toEqual({ accessToken: "a1", refreshToken: "a1" });
+    expect(manager.nick()).toBe("Zé");
+  });
+
+  it("invalidar com renovação transitória pendente lança AuthAdiadaError sem novo solve", async () => {
+    vi.useFakeTimers();
+    try {
+      const solver = {
+        getTokens: vi.fn<() => Promise<Tokens>>().mockRejectedValue(new SolverError("rede", true)),
+      };
+      const manager = criarGerente(new HealthState(null), {
+        stored: provedor(new AuthIndisponivelError("sem")),
+        solver,
+      });
+      await manager.autenticar();
+      expect(solver.getTokens).toHaveBeenCalledTimes(1);
+      await expect(manager.invalidar()).rejects.toBeInstanceOf(AuthAdiadaError);
+      expect(solver.getTokens).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

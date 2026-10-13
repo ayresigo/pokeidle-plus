@@ -10,6 +10,7 @@ interface AccountBody {
   pokeidleUser?: string;
   pokeidlePass?: string;
   proxyUrl?: string;
+  huntSlug?: string;
   solverKey?: string;
   accessToken?: string;
   refreshToken?: string;
@@ -25,6 +26,7 @@ const propriedadesConta = {
   pokeidleUser: { type: "string", maxLength: 128 },
   pokeidlePass: { type: "string", maxLength: 256 },
   proxyUrl: { type: "string", pattern: REGEX_PROXY_URL.source, maxLength: 512 },
+  huntSlug: { type: "string", maxLength: 64 },
   solverKey: { type: "string", maxLength: 2048 },
   accessToken: { type: "string", maxLength: 2048 },
   refreshToken: { type: "string", maxLength: 2048 },
@@ -65,6 +67,7 @@ function publico(account: Account) {
     label: account.label,
     pokeidleUser: account.pokeidleUser,
     proxyUrl: account.proxyUrl,
+    huntSlug: account.huntSlug,
     createdAt: account.createdAt,
   };
 }
@@ -104,6 +107,7 @@ export function registerAccountRoutes(app: FastifyInstance, prisma: PrismaClient
             label: request.body.label!,
             pokeidleUser: request.body.pokeidleUser!,
             proxyUrl: request.body.proxyUrl ?? null,
+            huntSlug: request.body.huntSlug || null,
             pokeidlePassEnc: encrypt(request.body.pokeidlePass!),
             solverKeyEnc: request.body.solverKey === undefined ? null : encrypt(request.body.solverKey),
             accessTokenEnc:
@@ -134,6 +138,7 @@ export function registerAccountRoutes(app: FastifyInstance, prisma: PrismaClient
             ...(body.label !== undefined && { label: body.label }),
             ...(body.pokeidleUser !== undefined && { pokeidleUser: body.pokeidleUser }),
             ...(body.proxyUrl !== undefined && { proxyUrl: body.proxyUrl }),
+            ...(body.huntSlug !== undefined && { huntSlug: body.huntSlug || null }),
             ...camposCriptografados(body),
           },
         });
@@ -172,6 +177,7 @@ export function registerAccountRoutes(app: FastifyInstance, prisma: PrismaClient
             refreshToken: descriptografar(conta.refreshTokenEnc),
             solverKey: descriptografar(conta.solverKeyEnc),
             proxyUrl: conta.proxyUrl,
+            huntSlug: conta.huntSlug,
           });
         } catch (err) {
           request.log.error(err, "falha ao descriptografar credenciais da conta %s", conta.id);

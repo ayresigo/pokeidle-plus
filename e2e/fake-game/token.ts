@@ -5,5 +5,3 @@ export const ACCESS_TOKEN_VALIDO = [
   .map((parte) => Buffer.from(JSON.stringify(parte)).toString("base64url"))
   .concat("assinatura-falsa-e2e")
   .join(".");
-
-export const REFRESH_TOKEN_E2E = "refresh-falso-e2e";
