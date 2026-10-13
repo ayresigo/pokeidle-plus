@@ -70,3 +70,18 @@ Lido do bundle `https://pokeidle.io/app.js?v=1.275.1` (2026-10-12), read-only.
 - **Recebidos (amostra):** `welcome`, `hunt`, `spawn`, `capturas`, `curado`, `coins`, `nivel`, `evento`, `erro`, `shiny.captura`, `xpPerdido`, `revive`, `sessao.renovada`.
 
 **Implicação:** o `game/client.ts`/`game/loop.ts` atuais (protocolo `field-init/field-kill/enter-hunt/balls-get`, sharding djb2, `?token=` na URL, close codes 400x) são do servidor errado e precisam ser reescritos para este protocolo. É a etapa seguinte (WS/game loop), após a re-apontação da auth.
+
+---
+
+## VAL-02/03/04 — Game loop real do pokeidle.io (probe WS ao vivo, 2026-10-12)
+
+Sessão real na conta descartável (navegador deslogado; sem 4005). Frames reais capturados.
+
+- **Conexão/handshake (VAL-02/03):** `wss://pokeidle.io` (raw, SEM shard, SEM `?token`). Primeiro frame `{t:'hello', nick, token, delta:1, dispositivo}` → `welcome` com `estado` (level, xp, gold, items). **Sem `cmid`; sem sharding djb2.** Token aceito no handshake (já provado). Não há close 4007 neste fluxo.
+- **Entrar na hunt (VAL-03):** `{t:'hunt.select', slug:'bellsprout'}` → `{t:'campo.init', slug, mapa, box, heroi, mobs[]}` + `{t:'batalha', ev:[{k:'hunt', slug, nome, trocaLivreEm}]}`. Slug inválido → `{t:'batalha', ev:[{k:'aviso', msg:'"<slug>" não é uma área caçável'}]}`. **O HUNT_SLUG correto é `bellsprout` (dois L), não `belsprout`.**
+- **KILL real (VAL-04):** `{t:'batalha', ev:[{k:'ataque', por:'jogador', slot, golpe, tipo, dano, ef, stab, hpAlvo, aoe}, {k:'morte', quem:'selvagem', slot, nome, xp, xpTreinador, xpPokemon, lootBoost, ouro, drops:[{nome,qtd}]}]}`. **Kill = evento `batalha` com `ev[].k === 'morte'` e `quem === 'selvagem'`** (traz nome da espécie, xp, ouro, drops). `k:'spawn'` = novo selvagem no campo.
+- **Contadores (VAL-04):** `{t:'estado', estado:{xp, gold, items:{...}, dexMud:{<speciesId>:{k:<kills>, c:<capturas>}}, pkMud:[{id, speciesId, level, xp, ...}]}}`. `dexMud[species] = {k:kills, c:capturas}` acumulado na pokédex; captura seria `k:'captura'`/`c` subindo (a conta de teste só mata com 1 golpe, `c:0`). O pokémon líder subiu de nível (10→11) via `pkMud`.
+- **Campo:** `{t:'campo', seq, ts, heroi, mobs[], alvo, fora[]}` — estado espacial do campo (posições), ~alta frequência. O herói auto-batalha; o worker não precisa mover.
+- **Keepalive:** `{t:'ping'}` → `{t:'pong'}`. **Cura:** enviar `{t:'centro.curar'}` (NPC Joy no `centro`). **Fechamento limpo:** `ws.close(1000)`.
+
+**Veredito:** VAL-02 (sem cmid, sem 4007 — handshake por token no frame `hello`), VAL-03 (entra na hunt via `hunt.select`, recebe `campo.init`), VAL-04 (kills reais via `batalha/morte`, contador em `dexMud`) **CONFIRMADOS no servidor real**. O `game/client.ts`/`game/loop.ts` atuais (protocolo antigo) serão reescritos para este vocabulário.
