@@ -85,3 +85,46 @@ Sessão real na conta descartável (navegador deslogado; sem 4005). Frames reais
 - **Keepalive:** `{t:'ping'}` → `{t:'pong'}`. **Cura:** enviar `{t:'centro.curar'}` (NPC Joy no `centro`). **Fechamento limpo:** `ws.close(1000)`.
 
 **Veredito:** VAL-02 (sem cmid, sem 4007 — handshake por token no frame `hello`), VAL-03 (entra na hunt via `hunt.select`, recebe `campo.init`), VAL-04 (kills reais via `batalha/morte`, contador em `dexMud`) **CONFIRMADOS no servidor real**. O `game/client.ts`/`game/loop.ts` atuais (protocolo antigo) serão reescritos para este vocabulário.
+
+---
+
+## Observação para as correções da 01.1 (sessão read-only ao vivo + bundle, 2026-10-13)
+
+Conta descartável, uma sessão curta só leitura (login via solver → `welcome` → `hunt.select bellsprout`),
+mais leitura read-only do bundle `https://pokeidle.io/app.js`. Nada pago. Sem segredos abaixo.
+
+### Formato do token (I2)
+- Token de `/auth/entrar` é **opaco: 2 partes**, ~152 chars, **não é JWT** e **não tem `exp`**
+  (`lerExpiracao`→`null`; payload não-decodificável como base64url JSON). Logo **não há refresh proativo
+  por `exp`**; a renovação é só pelo WS (`sessao.renovada`) ou re-login.
+- O **`nick` vem de `corpo.nick`** do `/auth/entrar` (não do token). O cliente oficial monta o hello com
+  `{t:'hello', nick: sessao.nick, token: sessao.token, delta:1, dispositivo: idDispositivo()}` (bundle).
+- `idDispositivo()` do cliente é um UUID **persistido no localStorage** (estável por install), não por processo.
+- Chave do token no navegador: a sessão é guardada por `guardarSessao/sessaoSalva` (localStorage); o token
+  cru vem do `token` de `/auth/entrar`. A UI deve pedir esse **token Bearer único**.
+
+### Fonte da hunt (C1) — CONFIRMADO
+- `welcome.estado.huntSlug` = **última hunt do jogador** (observado: `"bellsprout"`).
+- O servidor **auto-retoma a última hunt** na conexão: após o `welcome` (com `noCentro:true`), chegaram
+  sozinhos `campo.init slug:"centro"` (cura, `batalha ev [centro, joy]`) e depois `campo.init slug:"bellsprout"`
+  (`batalha ev [curado, hunt]`) + enxame de `spawn`, **sem nenhum `hunt.select`**. Enviar `hunt.select` depois
+  é idempotente (re-entra limpo e os kills seguem).
+- `welcome.hunts` = catálogo de hunts; `welcome.estado` traz o quadro completo (level, xp, gold, items, balls,
+  pokedex, pokemons, dexMud, centro/noCentro, bicicleta, guild, passe, boss…) — útil p/ o dashboard da Phase 2.
+- Kills: `batalha ev [ataque, morte]`; `estado.dexMud[species]={k,c}` e `estado.{xp,gold,items}` sobem.
+
+### Close codes / sessão substituída (I5) — do bundle (`ws.onclose`)
+- **4001 = sessão tomada** ("outro aparelho/aba/reconexão mais nova tomou esta conta"); o cliente oficial
+  **NÃO reconecta** (mostra "sessão tomada"). → sinal real de sessão substituída.
+- **4003 = IP banido** pelo painel; **não reconecta** (`auth.ipBanido`).
+- **4000 = ban/aviso de conta**; o `erro` (com `chave`) chega **antes** do fechamento; **não reconecta** (`travaDeConta`).
+- Outros (1012 restart, rede) → reconectar com backoff.
+
+### Frame `erro` (minor) — do bundle
+- O `erro` do WS carrega **`chave`** (não `msg`): `{t:'erro', chave:'<chave>'}`. Chaves de auth/conta terminais:
+  `auth.sessaoInvalida`, `auth.precisaLogin`, `auth.contaBanida`, `auth.contaExcluida`, `auth.ipBanido`,
+  `login.credenciaisInvalidas`, `login.contaBanida`, `login.ipBanido`, `login.turnstileFalhou`, `login.falhou`.
+
+### `sessao.renovada` (I1) — do bundle
+- `{t:'sessao.renovada', token}` → o cliente guarda o novo token (`s.token = m.token; guardarSessao`). É o que
+  impede a sessão longa de cair no login na próxima queda. O worker deve **adotar** esse token (auth + health).
