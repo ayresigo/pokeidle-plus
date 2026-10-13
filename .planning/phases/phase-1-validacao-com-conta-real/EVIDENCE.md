@@ -55,3 +55,18 @@ exige replanejar a Fase 1 (e impacta a Fase 2). Ver escalonamento ao usuário/co
 
 **Guardas aplicadas:** nenhuma compra/venda; sondas de login não abriram sessão WS; segredos só no `.env`
 local (ignorado pelo git); token de sessão obtido na prova foi descartado; nenhum segredo neste arquivo.
+
+---
+
+## Apêndice — Protocolo WebSocket real do pokeidle.io (mapa inicial p/ a próxima etapa e Fase 2)
+
+Lido do bundle `https://pokeidle.io/app.js?v=1.275.1` (2026-10-12), read-only.
+
+- **Conexão:** `new WebSocket(wss://pokeidle.io)` (raw, mesmo host, SEM shard e SEM token na URL).
+- **Handshake de auth (primeiro frame):** `{ t: 'hello', nick, token, delta: 1, dispositivo }`. O token (de `/auth/entrar`) e o `dispositivo` entram aqui. Ack do servidor: `welcome`.
+- **Formato das mensagens:** JSON com campo `t` (tipo). Ex. keep-alive: `{ t: 'ping' }`.
+- **Renovação de sessão:** evento recebido `sessao.renovada` (o token renova pelo próprio WS; não há endpoint REST de refresh).
+- **Enviados (amostra, namespaced):** `hunt.select` (entrar na hunt), `centro.curar` (cura — Fase 2 D-14), `centro.andar`, `shop.buy`/`loja.comprar` (comprar), `shop.autoVendaLoot` (auto-venda de loot — Fase 2 D-03), `team.move`/`team.active`, `pokemon.evoluir`/`refinar`, `starter.pick`, `auto.set`, `chat.send`, etc.
+- **Recebidos (amostra):** `welcome`, `hunt`, `spawn`, `capturas`, `curado`, `coins`, `nivel`, `evento`, `erro`, `shiny.captura`, `xpPerdido`, `revive`, `sessao.renovada`.
+
+**Implicação:** o `game/client.ts`/`game/loop.ts` atuais (protocolo `field-init/field-kill/enter-hunt/balls-get`, sharding djb2, `?token=` na URL, close codes 400x) são do servidor errado e precisam ser reescritos para este protocolo. É a etapa seguinte (WS/game loop), após a re-apontação da auth.
